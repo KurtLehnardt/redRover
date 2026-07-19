@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>redRover — Vibration Analyst</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        :root {
+            --bg: #0f1419;
+            --surface: #1a2332;
+            --border: #2d3f52;
+            --text: #e6edf3;
+            --muted: #7d8590;
+            --green: #3fb950;
+            --yellow: #d29922;
+            --red: #f85149;
+            --blue: #58a6ff;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace;
+            background: var(--bg);
+            color: var(--text);
+            padding: 2rem;
+            line-height: 1.5;
+        }
+        h1 { color: var(--red); margin-bottom: 0.25rem; font-size: 1.5rem; }
+        h2 { color: var(--blue); margin: 1.5rem 0 0.75rem; font-size: 1.1rem; }
+        .subtitle { color: var(--muted); margin-bottom: 2rem; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1rem; }
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.25rem;
+        }
+        .card h3 { font-size: 0.9rem; color: var(--muted); margin-bottom: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .stat { font-size: 2rem; font-weight: bold; }
+        .stat.green { color: var(--green); }
+        .stat.yellow { color: var(--yellow); }
+        .stat.red { color: var(--red); }
+        table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
+        th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
+        th { color: var(--muted); font-weight: normal; text-transform: uppercase; font-size: 0.75rem; }
+        .badge {
+            display: inline-block;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: bold;
+        }
+        .badge-normal { background: #1b3d2f; color: var(--green); }
+        .badge-warning { background: #3d2e0f; color: var(--yellow); }
+        .badge-critical { background: #3d1518; color: var(--red); }
+        .btn {
+            background: var(--blue);
+            color: var(--bg);
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 0.85rem;
+        }
+        .btn:hover { opacity: 0.9; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin: 1rem 0;
+            padding: 0.75rem 1rem;
+            background: var(--surface);
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--green);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .empty { color: var(--muted); font-style: italic; padding: 1rem 0; }
+    </style>
+</head>
+<body>
+    <h1>redRover</h1>
+    <p class="subtitle">Mobile Vibration Analyst — Predictive Maintenance Dashboard</p>
+
+    <div class="status-bar">
+        <div class="status-dot"></div>
+        <span>System Online</span>
+        <span style="color: var(--muted); margin-left: auto;">Last update: {{ now }}</span>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <h3>Active Faults</h3>
+            {% if faults %}
+            <div class="stat red">{{ faults|length }}</div>
+            {% else %}
+            <div class="stat green">0</div>
+            {% endif %}
+        </div>
+        <div class="card">
+            <h3>Patrols Completed</h3>
+            <div class="stat">{{ patrols|length }}</div>
+        </div>
+    </div>
+
+    <h2>Active Faults</h2>
+    <div class="card" id="faults-table" hx-get="/api/faults" hx-trigger="every 30s" hx-swap="innerHTML">
+        {% if faults %}
+        <table>
+            <thead>
+                <tr><th>Station</th><th>Fault</th><th>Severity</th><th>Confidence</th><th>Action</th></tr>
+            </thead>
+            <tbody>
+                {% for f in faults %}
+                <tr>
+                    <td><a href="/station/{{ f.station_id }}" style="color: var(--blue);">{{ f.station_id }}</a></td>
+                    <td>{{ f.fault_type }}</td>
+                    <td>
+                        {% if f.severity == 'severe' %}
+                        <span class="badge badge-critical">{{ f.severity }}</span>
+                        {% elif f.severity == 'moderate' %}
+                        <span class="badge badge-warning">{{ f.severity }}</span>
+                        {% else %}
+                        <span class="badge badge-normal">{{ f.severity }}</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ "%.0f"|format(f.confidence * 100) }}%</td>
+                    <td>{{ f.recommendation }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="empty">No active faults — all stations healthy.</p>
+        {% endif %}
+    </div>
+
+    <h2>Recent Patrols</h2>
+    <div class="card">
+        {% if patrols %}
+        <table>
+            <thead>
+                <tr><th>ID</th><th>Route</th><th>Started</th><th>Stations</th><th>Faults</th></tr>
+            </thead>
+            <tbody>
+                {% for p in patrols %}
+                <tr>
+                    <td>#{{ p.id }}</td>
+                    <td>{{ p.route_name }}</td>
+                    <td>{{ p.started_at }}</td>
+                    <td>{{ p.stations_visited }}</td>
+                    <td>
+                        {% if p.faults_detected > 0 %}
+                        <span class="badge badge-warning">{{ p.faults_detected }}</span>
+                        {% else %}
+                        <span class="badge badge-normal">0</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="empty">No patrols recorded yet. Run your first patrol to see results.</p>
+        {% endif %}
+    </div>
+
+    <h2>Controls</h2>
+    <div class="card">
+        <button class="btn" hx-post="/api/demo-patrol" hx-swap="none"
+                hx-indicator="#patrol-status"
+                onclick="this.disabled=true; this.textContent='Running...';">
+            Run Demo Patrol (Simulated)
+        </button>
+        <span id="patrol-status" style="margin-left: 1rem; color: var(--muted);"></span>
+    </div>
+</body>
+</html>

@@ -1,0 +1,37 @@
+[rover]
+# Connection type: "uart" for Jetson, "ble" for laptop
+connection = "ble"
+# Patrol speed (0.0 - 1.0)
+speed = 0.3
+# Time to dwell at each machine station (seconds)
+dwell_time = 10
+
+[sensors]
+# Sampling rate for vibration data (Hz)
+sample_rate = 4000
+# Duration of each measurement (seconds)
+measurement_duration = 5
+# Sensor type: "imu" (RVR+ built-in), "usb_accel", "contact_mic"
+sensor_type = "imu"
+
+[ai]
+# Model to use for vibration reasoning
+model = "gemma3"
+# Ollama host
+ollama_host = "http://localhost:11434"
+# Confidence threshold for fault alerts
+alert_threshold = 0.75
+
+[scheduler]
+# Patrol interval (minutes)
+patrol_interval = 60
+# Quiet hours only (when factory noise is lowest)
+quiet_hours_start = "22:00"
+quiet_hours_end = "06:00"
+
+[dashboard]
+host = "0.0.0.0"
+port = 8080
+
+[database]
+path = "data/redRover.db"

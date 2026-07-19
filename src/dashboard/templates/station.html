@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>redRover — Station {{ station_id }}</title>
+    <style>
+        :root {
+            --bg: #0f1419;
+            --surface: #1a2332;
+            --border: #2d3f52;
+            --text: #e6edf3;
+            --muted: #7d8590;
+            --green: #3fb950;
+            --yellow: #d29922;
+            --red: #f85149;
+            --blue: #58a6ff;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace;
+            background: var(--bg);
+            color: var(--text);
+            padding: 2rem;
+            line-height: 1.5;
+        }
+        h1 { color: var(--blue); margin-bottom: 0.25rem; font-size: 1.5rem; }
+        .back { color: var(--muted); text-decoration: none; font-size: 0.85rem; }
+        .back:hover { color: var(--text); }
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.25rem;
+            margin-top: 1.5rem;
+        }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); font-size: 0.8rem; }
+        th { color: var(--muted); font-weight: normal; text-transform: uppercase; font-size: 0.7rem; }
+        .badge {
+            display: inline-block;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: bold;
+        }
+        .badge-normal { background: #1b3d2f; color: var(--green); }
+        .badge-warning { background: #3d2e0f; color: var(--yellow); }
+        .badge-critical { background: #3d1518; color: var(--red); }
+        .empty { color: var(--muted); font-style: italic; padding: 1rem 0; }
+    </style>
+</head>
+<body>
+    <a href="/" class="back">&larr; Back to Dashboard</a>
+    <h1>Station {{ station_id }}</h1>
+
+    <div class="card">
+        <h3 style="color: var(--muted); margin-bottom: 0.75rem;">Measurement History</h3>
+        {% if history %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>RMS</th>
+                    <th>Peak</th>
+                    <th>Kurtosis</th>
+                    <th>Diagnosis</th>
+                    <th>Severity</th>
+                    <th>Confidence</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for h in history %}
+                <tr>
+                    <td>{{ h.measured_at }}</td>
+                    <td>{{ "%.4f"|format(h.rms) }}</td>
+                    <td>{{ "%.4f"|format(h.peak) }}</td>
+                    <td>{{ "%.2f"|format(h.kurtosis) }}</td>
+                    <td>{{ h.fault_type or "—" }}</td>
+                    <td>
+                        {% if h.severity == 'severe' %}
+                        <span class="badge badge-critical">{{ h.severity }}</span>
+                        {% elif h.severity == 'moderate' %}
+                        <span class="badge badge-warning">{{ h.severity }}</span>
+                        {% elif h.severity %}
+                        <span class="badge badge-normal">{{ h.severity }}</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ "%.0f"|format(h.confidence * 100) if h.confidence else "—" }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="empty">No measurements recorded for this station yet.</p>
+        {% endif %}
+    </div>
+</body>
+</html>
