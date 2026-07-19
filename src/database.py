@@ -138,6 +138,24 @@ class Database:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
+    async def get_station_trend(self, station_id: str, limit: int = 5) -> list[dict]:
+        """Get recent measurement + diagnosis history for a station, oldest first.
+        Used to provide trend context to AI analysis."""
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """SELECT m.measured_at, m.rms, m.peak, m.kurtosis, m.crest_factor,
+                          d.fault_type, d.severity, d.confidence
+                   FROM measurements m
+                   LEFT JOIN diagnoses d ON d.measurement_id = m.id
+                   WHERE m.station_id = ?
+                   ORDER BY m.id DESC LIMIT ?""",
+                (station_id, limit),
+            )
+            rows = await cursor.fetchall()
+            # Reverse to oldest-first order
+            return [dict(r) for r in reversed(rows)]
+
     async def get_active_faults(self) -> list[dict]:
         """Get most recent diagnosis for each station that has a fault."""
         async with aiosqlite.connect(self.path) as db:

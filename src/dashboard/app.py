@@ -4,6 +4,8 @@ import asyncio
 from pathlib import Path
 from datetime import datetime
 
+import httpx
+
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -77,9 +79,54 @@ async def get_station_history(station_id: str):
     return history
 
 
+async def _check_ai_status() -> dict:
+    """Check Ollama connectivity and model availability."""
+    ollama_host = config.ai.ollama_host
+    model = config.ai.model
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{ollama_host}/api/tags")
+            response.raise_for_status()
+            data = response.json()
+            available_models = [
+                m.get("name", "") for m in data.get("models", [])
+            ]
+            # Ollama model names may include a tag suffix (e.g. "gemma3:latest")
+            model_found = any(
+                m == model or m.startswith(f"{model}:") for m in available_models
+            )
+            if model_found:
+                return {
+                    "ai_status": "online",
+                    "ai_model": model,
+                    "inference_mode": "llm",
+                    "message": f"Ollama is running and model '{model}' is available",
+                }
+            else:
+                return {
+                    "ai_status": "model_missing",
+                    "ai_model": model,
+                    "inference_mode": "rule_based",
+                    "message": f"Ollama is running but model '{model}' is not found. Available: {available_models}",
+                }
+    except Exception:
+        return {
+            "ai_status": "offline",
+            "ai_model": model,
+            "inference_mode": "rule_based",
+            "message": f"Cannot reach Ollama at {ollama_host}. Fusion analysis will use rule-based fallback.",
+        }
+
+
+@app.get("/api/system-status")
+async def system_status():
+    return await _check_ai_status()
+
+
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "0.1.0"}
+    ai_status = await _check_ai_status()
+    return {"status": "ok", "version": "0.1.0", "ai": ai_status}
 
 
 def start():
