@@ -12,9 +12,11 @@ Main entry point. Runs a patrol cycle:
 import asyncio
 import argparse
 import logging
+import time
 from datetime import datetime
 
 from .config import load_config
+from .telemetry import init_telemetry, get_tracer, get_meter
 from .rover.controller import RoverController, Waypoint, PatrolRoute
 from .sensors.vibration import FaultType, extract_features
 from .sensors.acoustic import AcousticFaultType
@@ -77,6 +79,36 @@ async def run_patrol(simulate: bool = True, skip_ai: bool = False):
     """Execute a single patrol cycle with multi-modal sensor fusion."""
     config = load_config()
 
+    # Initialize telemetry
+    init_telemetry(
+        service_name=config.telemetry.service_name,
+        endpoint=config.telemetry.endpoint or None,
+        enabled=config.telemetry.enabled,
+        export_interval_ms=config.telemetry.export_interval_ms,
+    )
+    tracer = get_tracer()
+    meter = get_meter()
+
+    # Metrics
+    patrol_duration_hist = meter.create_histogram(
+        "redrover.patrol.duration_seconds",
+        description="Duration of a full patrol cycle",
+        unit="s",
+    )
+    station_measurement_hist = meter.create_histogram(
+        "redrover.station.measurement_seconds",
+        description="Time to measure a single station",
+        unit="s",
+    )
+    faults_detected_counter = meter.create_counter(
+        "redrover.patrol.faults_detected",
+        description="Total faults detected across patrols",
+    )
+    sensor_failure_counter = meter.create_counter(
+        "redrover.sensor.failures",
+        description="Sensor read failures by type",
+    )
+
     # Initialize components
     rover = RoverController(
         connection=config.rover.connection,
@@ -102,8 +134,16 @@ async def run_patrol(simulate: bool = True, skip_ai: bool = False):
     results = []
     total_stations = len(DEMO_ROUTE.waypoints)
     sensor_failures = {"vibration": 0, "acoustic": 0, "thermal": 0}
+    patrol_start = time.time()
+    patrol_span = tracer.start_span("patrol", attributes={
+        "patrol.route": DEMO_ROUTE.name,
+        "patrol.station_count": total_stations,
+        "patrol.simulate": simulate,
+        "patrol.skip_ai": skip_ai,
+    })
 
     for waypoint in DEMO_ROUTE.waypoints:
+        station_start = time.time()
         logger.info("")
         logger.info("━" * 70)
         logger.info("STATION: %s — %s", waypoint.station_id, waypoint.name)
@@ -130,6 +170,7 @@ async def run_patrol(simulate: bool = True, skip_ai: bool = False):
             logger.warning("  [VIB] Sensor failed: %s", e)
             vib_sample = None
             sensor_failures["vibration"] += 1
+            sensor_failure_counter.add(1, {"sensor.type": "vibration", "station.id": waypoint.station_id})
 
         vib_features_real = False
         if vib_sample is not None:
@@ -161,6 +202,7 @@ async def run_patrol(simulate: bool = True, skip_ai: bool = False):
             logger.warning("  [ACO] Sensor failed: %s", e)
             aco_sample = None
             sensor_failures["acoustic"] += 1
+            sensor_failure_counter.add(1, {"sensor.type": "acoustic", "station.id": waypoint.station_id})
 
         if aco_sample is not None:
             logger.info("  [ACO] RMS=%.4f Ultrasonic=%.4f",
@@ -179,6 +221,7 @@ async def run_patrol(simulate: bool = True, skip_ai: bool = False):
             logger.warning("  [THM] Sensor failed: %s", e)
             thermal_frame = None
             sensor_failures["thermal"] += 1
+            sensor_failure_counter.add(1, {"sensor.type": "thermal", "station.id": waypoint.station_id})
 
         if thermal_frame is not None:
             logger.info("  [THM] Max=%.1f°C Mean=%.1f°C Delta=%.1f°C",
@@ -239,6 +282,12 @@ async def run_patrol(simulate: bool = True, skip_ai: bool = False):
                 patrol_id, waypoint.station_id, datetime.now().isoformat(), vib_features
             )
 
+        # Record station measurement duration
+        station_measurement_hist.record(
+            time.time() - station_start,
+            {"station.id": waypoint.station_id},
+        )
+
     # Return home
     logger.info("")
     logger.info("━" * 70)
@@ -276,12 +325,22 @@ async def run_patrol(simulate: bool = True, skip_ai: bool = False):
 
     logger.info("=" * 70)
 
+    n_faults = len([r for r in results if r.overall_health != OverallHealth.HEALTHY])
     await db.complete_patrol(
         patrol_id, datetime.now().isoformat(),
         len(DEMO_ROUTE.waypoints),
-        len([r for r in results if r.overall_health != OverallHealth.HEALTHY]),
+        n_faults,
     )
     await rover.disconnect()
+
+    # Record patrol-level metrics
+    patrol_duration = time.time() - patrol_start
+    patrol_duration_hist.record(patrol_duration, {"patrol.route": DEMO_ROUTE.name})
+    faults_detected_counter.add(n_faults, {"patrol.route": DEMO_ROUTE.name})
+    patrol_span.set_attribute("patrol.faults_detected", n_faults)
+    patrol_span.set_attribute("patrol.duration_seconds", patrol_duration)
+    patrol_span.end()
+
     return results
 
 

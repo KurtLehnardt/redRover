@@ -6,10 +6,13 @@ and catch faults that single-sensor analysis would miss.
 """
 
 import json
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 
 import httpx
+
+from ..telemetry import get_tracer, get_meter
 
 from ..sensors.vibration import VibrationSample, FaultType, extract_features
 from ..sensors.acoustic import AcousticSample, AcousticFaultType, extract_acoustic_features
@@ -75,6 +78,25 @@ class FusionAnalyzer:
     def __init__(self, model: str = "gemma3", ollama_host: str = "http://localhost:11434"):
         self.model = model
         self.ollama_host = ollama_host
+        self._tracer = get_tracer("redrover.fusion")
+        self._meter = get_meter("redrover.fusion")
+        self._inference_duration = self._meter.create_histogram(
+            "redrover.ai.inference_seconds",
+            description="Duration of fusion inference",
+            unit="s",
+        )
+        self._inference_mode_counter = self._meter.create_counter(
+            "redrover.ai.inference_count",
+            description="Inference count by mode (llm, rule_based, degraded)",
+        )
+        self._confidence_hist = self._meter.create_histogram(
+            "redrover.ai.confidence",
+            description="Overall confidence of fused diagnosis",
+        )
+        self._fault_counter = self._meter.create_counter(
+            "redrover.ai.faults_detected",
+            description="Faults detected by type",
+        )
 
     async def analyze(
         self,
@@ -85,6 +107,7 @@ class FusionAnalyzer:
         station_history: list[dict] | None = None,
     ) -> FusedDiagnosis:
         """Run fused analysis across all available sensor data."""
+        start = time.time()
         modality_results = []
 
         # Process each modality independently first
@@ -102,12 +125,12 @@ class FusionAnalyzer:
 
         # Run AI fusion if we have multiple modalities
         if len(modality_results) >= 2:
-            return await self._ai_fusion(station_id, modality_results, station_history=station_history)
+            result = await self._ai_fusion(station_id, modality_results, station_history=station_history)
         elif len(modality_results) == 1:
             # Single modality — just wrap it
             r = modality_results[0]
             health = self._severity_to_health(r.severity)
-            return FusedDiagnosis(
+            result = FusedDiagnosis(
                 station_id=station_id,
                 overall_health=health,
                 overall_confidence=r.confidence,
@@ -119,7 +142,7 @@ class FusionAnalyzer:
                 inference_mode="degraded",
             )
         else:
-            return FusedDiagnosis(
+            result = FusedDiagnosis(
                 station_id=station_id,
                 overall_health=OverallHealth.HEALTHY,
                 overall_confidence=0.0,
@@ -130,6 +153,17 @@ class FusionAnalyzer:
                 reasoning="No modalities provided",
                 inference_mode="degraded",
             )
+
+        # Record telemetry
+        duration = time.time() - start
+        attrs = {"station.id": station_id, "inference.mode": result.inference_mode}
+        self._inference_duration.record(duration, attrs)
+        self._inference_mode_counter.add(1, {"inference.mode": result.inference_mode})
+        self._confidence_hist.record(result.overall_confidence, attrs)
+        for fault in result.correlated_faults:
+            self._fault_counter.add(1, {"fault.type": fault, "station.id": station_id})
+
+        return result
 
     def _analyze_vibration(self, sample: VibrationSample) -> ModalityResult:
         """Rule-based vibration assessment."""

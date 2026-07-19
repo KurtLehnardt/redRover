@@ -16,8 +16,16 @@ from ..database import Database
 from ..sensors.simulator import generate_sample
 from ..sensors.vibration import FaultType, extract_features
 from ..ai.analyzer import VibrationAnalyzer
+from ..telemetry import init_telemetry
 
 app = FastAPI(title="redRover Dashboard", version="0.1.0")
+
+# Auto-instrument FastAPI with OpenTelemetry
+try:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    FastAPIInstrumentor.instrument_app(app)
+except ImportError:
+    pass
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 TEMPLATES_DIR.mkdir(exist_ok=True)

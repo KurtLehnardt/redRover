@@ -33,5 +33,12 @@ quiet_hours_end = "06:00"
 host = "0.0.0.0"
 port = 8080
 
+[telemetry]
+enabled = true
+service_name = "redrover"
+# OTLP gRPC endpoint (set to "" for console-only export)
+endpoint = ""
+export_interval_ms = 5000
+
 [database]
 path = "data/redRover.db"
