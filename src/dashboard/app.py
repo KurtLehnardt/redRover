@@ -36,8 +36,7 @@ async def startup():
 async def index(request: Request):
     patrols = await db.get_recent_patrols(10)
     faults = await db.get_active_faults()
-    return templates.TemplateResponse("index.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "index.html", context={
         "patrols": patrols,
         "faults": faults,
         "now": datetime.now().isoformat(),
@@ -47,8 +46,7 @@ async def index(request: Request):
 @app.get("/station/{station_id}", response_class=HTMLResponse)
 async def station_detail(request: Request, station_id: str):
     history = await db.get_station_history(station_id, 50)
-    return templates.TemplateResponse("station.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "station.html", context={
         "station_id": station_id,
         "history": history,
     })

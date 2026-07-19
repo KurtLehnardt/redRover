@@ -144,6 +144,9 @@ class FusionAnalyzer:
         elif kurtosis > 6:
             return ModalityResult("vibration", True, "bearing_fault", 0.90, "severe",
                                   details=features)
+        elif crest > 4.0:
+            return ModalityResult("vibration", True, "bearing_fault", 0.70, "incipient",
+                                  details=features)
         elif features["energy_0_100hz"] > 0.5 and features["dominant_frequency_hz"] < 100:
             # Strong low-frequency — check for misalignment or imbalance
             if features["energy_0_100hz"] > 1.0:
