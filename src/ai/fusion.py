@@ -6,10 +6,13 @@ and catch faults that single-sensor analysis would miss.
 """
 
 import json
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 
 import httpx
+
+from ..telemetry import get_tracer, get_meter
 
 from ..sensors.vibration import VibrationSample, FaultType, extract_features
 from ..sensors.acoustic import AcousticSample, AcousticFaultType, extract_acoustic_features
@@ -45,6 +48,7 @@ class FusedDiagnosis:
     recommendation: str
     priority: int  # 1=highest priority (critical), 4=lowest (healthy)
     reasoning: str
+    inference_mode: str = "llm"  # "llm", "rule_based", "degraded"
 
 
 FUSION_PROMPT = """You are a multi-modal predictive maintenance expert. You receive data from
@@ -74,6 +78,25 @@ class FusionAnalyzer:
     def __init__(self, model: str = "gemma3", ollama_host: str = "http://localhost:11434"):
         self.model = model
         self.ollama_host = ollama_host
+        self._tracer = get_tracer("redrover.fusion")
+        self._meter = get_meter("redrover.fusion")
+        self._inference_duration = self._meter.create_histogram(
+            "redrover.ai.inference_seconds",
+            description="Duration of fusion inference",
+            unit="s",
+        )
+        self._inference_mode_counter = self._meter.create_counter(
+            "redrover.ai.inference_count",
+            description="Inference count by mode (llm, rule_based, degraded)",
+        )
+        self._confidence_hist = self._meter.create_histogram(
+            "redrover.ai.confidence",
+            description="Overall confidence of fused diagnosis",
+        )
+        self._fault_counter = self._meter.create_counter(
+            "redrover.ai.faults_detected",
+            description="Faults detected by type",
+        )
 
     async def analyze(
         self,
@@ -81,8 +104,10 @@ class FusionAnalyzer:
         vibration: VibrationSample | None = None,
         acoustic: AcousticSample | None = None,
         thermal: ThermalFrame | None = None,
+        station_history: list[dict] | None = None,
     ) -> FusedDiagnosis:
         """Run fused analysis across all available sensor data."""
+        start = time.time()
         modality_results = []
 
         # Process each modality independently first
@@ -100,12 +125,12 @@ class FusionAnalyzer:
 
         # Run AI fusion if we have multiple modalities
         if len(modality_results) >= 2:
-            return await self._ai_fusion(station_id, modality_results)
+            result = await self._ai_fusion(station_id, modality_results, station_history=station_history)
         elif len(modality_results) == 1:
             # Single modality — just wrap it
             r = modality_results[0]
             health = self._severity_to_health(r.severity)
-            return FusedDiagnosis(
+            result = FusedDiagnosis(
                 station_id=station_id,
                 overall_health=health,
                 overall_confidence=r.confidence,
@@ -114,9 +139,10 @@ class FusionAnalyzer:
                 recommendation=f"Single-sensor detection: {r.fault_type}" if r.fault_detected else "All clear",
                 priority=self._health_to_priority(health),
                 reasoning=f"Based on {r.modality} only",
+                inference_mode="degraded",
             )
         else:
-            return FusedDiagnosis(
+            result = FusedDiagnosis(
                 station_id=station_id,
                 overall_health=OverallHealth.HEALTHY,
                 overall_confidence=0.0,
@@ -125,7 +151,19 @@ class FusionAnalyzer:
                 recommendation="No sensor data available",
                 priority=4,
                 reasoning="No modalities provided",
+                inference_mode="degraded",
             )
+
+        # Record telemetry
+        duration = time.time() - start
+        attrs = {"station.id": station_id, "inference.mode": result.inference_mode}
+        self._inference_duration.record(duration, attrs)
+        self._inference_mode_counter.add(1, {"inference.mode": result.inference_mode})
+        self._confidence_hist.record(result.overall_confidence, attrs)
+        for fault in result.correlated_faults:
+            self._fault_counter.add(1, {"fault.type": fault, "station.id": station_id})
+
+        return result
 
     def _analyze_vibration(self, sample: VibrationSample) -> ModalityResult:
         """Rule-based vibration assessment."""
@@ -139,6 +177,9 @@ class FusionAnalyzer:
                                   details=features)
         elif kurtosis > 6:
             return ModalityResult("vibration", True, "bearing_fault", 0.90, "severe",
+                                  details=features)
+        elif crest > 4.0:
+            return ModalityResult("vibration", True, "bearing_fault", 0.70, "incipient",
                                   details=features)
         elif features["energy_0_100hz"] > 0.5 and features["dominant_frequency_hz"] < 100:
             # Strong low-frequency — check for misalignment or imbalance
@@ -196,9 +237,10 @@ class FusionAnalyzer:
         self,
         station_id: str,
         results: list[ModalityResult],
+        station_history: list[dict] | None = None,
     ) -> FusedDiagnosis:
         """Use LLM to correlate cross-modal signals."""
-        prompt = self._build_fusion_prompt(station_id, results)
+        prompt = self._build_fusion_prompt(station_id, results, station_history=station_history)
 
         try:
             response = await self._query_ollama(prompt)
@@ -213,12 +255,18 @@ class FusionAnalyzer:
                 recommendation=data.get("recommendation", ""),
                 priority=int(data.get("priority", 4)),
                 reasoning=data.get("reasoning", ""),
+                inference_mode="llm",
             )
         except Exception:
             # Fallback: rule-based fusion without LLM
-            return self._rule_based_fusion(station_id, results)
+            result = self._rule_based_fusion(station_id, results, station_history=station_history)
+            result.inference_mode = "rule_based"
+            return result
 
-    def _rule_based_fusion(self, station_id: str, results: list[ModalityResult]) -> FusedDiagnosis:
+    def _rule_based_fusion(
+        self, station_id: str, results: list[ModalityResult],
+        station_history: list[dict] | None = None,
+    ) -> FusedDiagnosis:
         """Fallback fusion without LLM — pure rule-based correlation."""
         faults = [r for r in results if r.fault_detected]
         n_faults = len(faults)
@@ -233,6 +281,7 @@ class FusionAnalyzer:
                 recommendation="All sensors nominal",
                 priority=4,
                 reasoning="No faults detected across any modality",
+                inference_mode="rule_based",
             )
 
         # Check for corroborating evidence
@@ -252,15 +301,38 @@ class FusionAnalyzer:
             health = OverallHealth.WARNING if faults[0].severity in ("moderate", "severe") else OverallHealth.MONITOR
 
         fault_types = [r.fault_type for r in faults]
+        recommendation = self._generate_recommendation(faults)
+
+        # Trend escalation: if fault type persists across recent history, escalate
+        if station_history:
+            current_fault_types = set(fault_types)
+            recent_history = station_history[-3:]  # Last 3 readings
+            for ft in current_fault_types:
+                historical_count = sum(
+                    1 for h in recent_history
+                    if h.get("fault_type") == ft and h["fault_type"] != "normal"
+                )
+                if historical_count > 0:
+                    # Escalate severity: incipient→moderate, moderate→severe
+                    severity_escalation = {
+                        OverallHealth.MONITOR: OverallHealth.WARNING,
+                        OverallHealth.WARNING: OverallHealth.CRITICAL,
+                    }
+                    if health in severity_escalation:
+                        health = severity_escalation[health]
+                    recommendation += " TRENDING: fault persistent across multiple patrols"
+                    break  # Only escalate once
+
         return FusedDiagnosis(
             station_id=station_id,
             overall_health=health,
             overall_confidence=self._compute_fused_confidence(results),
             modality_results=results,
             correlated_faults=correlated or fault_types,
-            recommendation=self._generate_recommendation(faults),
+            recommendation=recommendation,
             priority=self._health_to_priority(health),
             reasoning=f"Faults from {n_faults} modalities: {', '.join(fault_types)}",
+            inference_mode="rule_based",
         )
 
     def _generate_recommendation(self, faults: list[ModalityResult]) -> str:
@@ -287,7 +359,10 @@ class FusionAnalyzer:
         bonus = 0.05 * (len(fault_results) - 1)
         return min(base + bonus, 0.99)
 
-    def _build_fusion_prompt(self, station_id: str, results: list[ModalityResult]) -> str:
+    def _build_fusion_prompt(
+        self, station_id: str, results: list[ModalityResult],
+        station_history: list[dict] | None = None,
+    ) -> str:
         """Build prompt for LLM fusion analysis."""
         lines = [f"Station: {station_id}\n\nSensor Readings:"]
         for r in results:
@@ -299,6 +374,20 @@ class FusionAnalyzer:
                     lines.append(f"  {key}: {val:.4f}")
                 else:
                     lines.append(f"  {key}: {val}")
+
+        # Append historical trend context if available
+        if station_history:
+            lines.append("\n\nHistorical Trend:")
+            lines.append("Previous measurements at this station:")
+            for h in station_history:
+                ts = h.get("measured_at", "?")[:16]  # Trim to minute precision
+                rms = h.get("rms", 0) or 0
+                kurtosis = h.get("kurtosis", 0) or 0
+                fault = h.get("fault_type", "unknown") or "unknown"
+                conf = h.get("confidence", 0) or 0
+                lines.append(f"  {ts} RMS={rms:.2f} Kurtosis={kurtosis:.1f} -> {fault} ({conf:.0%})")
+            lines.append("  [current reading]")
+            lines.append("\nAnalyze the trend: is this getting worse, stable, or improving?")
 
         lines.append("\nProvide a fused diagnosis correlating all sensor data.")
         return "\n".join(lines)
