@@ -20,6 +20,10 @@ python-multipart>=0.0.6
 # Database
 aiosqlite>=0.19.0
 
+# Drone (DJI Tello)
+djitellopy>=2.5.0
+opencv-python>=4.8.0
+
 # Telemetry
 opentelemetry-api>=1.25.0
 opentelemetry-sdk>=1.25.0

@@ -1,12 +1,13 @@
-"""redRover — Multi-Modal Facility Health Robot.
+"""redRover — Multi-Modal Facility Health Robot with Aerial Drone.
 
 Main entry point. Runs a patrol cycle:
-1. Connect to RVR+
+1. Connect to RVR+ and drone
 2. Drive to each machine station
-3. Measure: vibration + acoustic + thermal (+ visual when camera available)
+3. Measure: vibration + acoustic + thermal
 4. Fuse sensor data with local AI
-5. Log results + alert if fault detected
-6. Return home
+5. If aerial inspection needed → deploy drone from cradle
+6. Log results + alert if fault detected
+7. Return home
 """
 
 import asyncio
@@ -27,6 +28,8 @@ from .sensors.simulator import (
     generate_thermal_frame,
 )
 from .ai.fusion import FusionAnalyzer, OverallHealth
+from .drone.controller import DroneController, DroneType
+from .drone.orchestrator import DroneRoverOrchestrator
 from .database import Database
 
 logging.basicConfig(
@@ -53,30 +56,34 @@ DEMO_SCENARIOS = {
         "vibration": (FaultType.NORMAL, 0.0),
         "acoustic": (AcousticFaultType.NORMAL, 0.0),
         "thermal": (ThermalFaultType.NORMAL, 0.0),
+        "has_overhead_equipment": False,
     },
     "M-002": {
         # Bearing failure: confirmed by vibration + thermal
         "vibration": (FaultType.BEARING_OUTER, 0.7),
         "acoustic": (AcousticFaultType.FRICTION, 0.4),
         "thermal": (ThermalFaultType.HOTSPOT, 0.6),
+        "has_overhead_equipment": True,
     },
     "M-003": {
-        # Air leak near compressor: acoustic only
+        # Air leak near compressor — drone should deploy to inspect overhead pipes
         "vibration": (FaultType.NORMAL, 0.0),
         "acoustic": (AcousticFaultType.AIR_LEAK, 0.7),
         "thermal": (ThermalFaultType.NORMAL, 0.0),
+        "has_overhead_equipment": True,
     },
     "M-004": {
         # Misalignment causing overheating
         "vibration": (FaultType.MISALIGNMENT, 0.5),
         "acoustic": (AcousticFaultType.NORMAL, 0.0),
         "thermal": (ThermalFaultType.HOTSPOT, 0.4),
+        "has_overhead_equipment": True,
     },
 }
 
 
-async def run_patrol(simulate: bool = True, skip_ai: bool = False):
-    """Execute a single patrol cycle with multi-modal sensor fusion."""
+async def run_patrol(simulate: bool = True, skip_ai: bool = False, enable_drone: bool = True):
+    """Execute a single patrol cycle with multi-modal sensor fusion + drone."""
     config = load_config()
 
     # Initialize telemetry
@@ -119,16 +126,23 @@ async def run_patrol(simulate: bool = True, skip_ai: bool = False):
         model=config.ai.model,
         ollama_host=config.ai.ollama_host,
     )
+    drone = DroneController(
+        drone_type=DroneType.SIMULATED if simulate else DroneType.TELLO,
+    )
+    orchestrator = DroneRoverOrchestrator(rover=rover, drone=drone)
     db = Database(config.database.path)
     await db.init()
 
     logger.info("=" * 70)
     logger.info("redRover Multi-Modal Patrol — %s", datetime.now().isoformat())
     logger.info("Route: %s (%d stations)", DEMO_ROUTE.name, len(DEMO_ROUTE.waypoints))
-    logger.info("Modalities: Vibration + Acoustic + Thermal")
+    logger.info("Modalities: Vibration + Acoustic + Thermal + Aerial Drone")
+    logger.info("Drone: %s (battery: %d%%)",
+                drone.drone_type.value, drone.battery)
     logger.info("=" * 70)
 
     await rover.connect()
+    await drone.connect()
 
     patrol_id = await db.start_patrol(DEMO_ROUTE.name, datetime.now().isoformat())
     results = []
@@ -228,7 +242,8 @@ async def run_patrol(simulate: bool = True, skip_ai: bool = False):
                         thermal_frame.max_temp, thermal_frame.mean_temp,
                         thermal_frame.delta_above_ambient)
 
-        # === FUSION ===
+        # === FUSION ANALYSIS ===
+        diagnosis = None
         if not skip_ai:
             # Fetch historical trend for this station
             station_history = await db.get_station_trend(waypoint.station_id, limit=5)
@@ -246,7 +261,6 @@ async def run_patrol(simulate: bool = True, skip_ai: bool = False):
                 )
                 results.append(diagnosis)
 
-                # Log result with severity-appropriate level
                 health_icon = {
                     OverallHealth.HEALTHY: "✓",
                     OverallHealth.MONITOR: "◎",
@@ -266,7 +280,6 @@ async def run_patrol(simulate: bool = True, skip_ai: bool = False):
                 if diagnosis.recommendation and diagnosis.overall_health != OverallHealth.HEALTHY:
                     logger.warning("  [AI]  → %s", diagnosis.recommendation)
 
-                # Log per-modality results
                 for mr in diagnosis.modality_results:
                     status = f"{mr.fault_type} ({mr.severity})" if mr.fault_detected else "normal"
                     logger.info("         %s: %s [%.0f%%]", mr.modality, status, mr.confidence * 100)
@@ -275,6 +288,23 @@ async def run_patrol(simulate: bool = True, skip_ai: bool = False):
                 logger.error("  [AI]  Fusion analysis failed: %s", e)
         else:
             logger.info("  [AI]  Analysis skipped (--skip-ai)")
+
+        # === DRONE DEPLOYMENT (if fault warrants aerial inspection) ===
+        if enable_drone and diagnosis and diagnosis.overall_health != OverallHealth.HEALTHY:
+            # Check each detected fault to see if drone should deploy
+            for mr in diagnosis.modality_results:
+                if mr.fault_detected:
+                    station_config = {
+                        "has_overhead_equipment": scenario.get("has_overhead_equipment", False),
+                    }
+                    deploy_result = await orchestrator.evaluate_and_deploy(
+                        station_id=waypoint.station_id,
+                        fault_type=mr.fault_type,
+                        station_config=station_config,
+                    )
+                    if deploy_result:
+                        # Only deploy once per station
+                        break
 
         # Log measurement to database (only if real vibration features available)
         if vib_features_real:
@@ -307,6 +337,8 @@ async def run_patrol(simulate: bool = True, skip_ai: bool = False):
 
         logger.info("  Stations: %d | Critical: %d | Warning: %d | Monitor: %d | Healthy: %d",
                     len(results), len(critical), len(warnings), len(monitors), len(healthy))
+        logger.info("  Drone deployments: %d (%d successful)",
+                    orchestrator.total_deployments, orchestrator.successful_deployments)
 
         for r in sorted(results, key=lambda x: x.priority):
             if r.overall_health != OverallHealth.HEALTHY:
@@ -322,6 +354,8 @@ async def run_patrol(simulate: bool = True, skip_ai: bool = False):
     thm_ok = total_stations - sensor_failures["thermal"]
     logger.info("  Sensor reliability: VIB %d/%d ACO %d/%d THM %d/%d",
                 vib_ok, total_stations, aco_ok, total_stations, thm_ok, total_stations)
+    if enable_drone:
+        logger.info("  Drone battery remaining: %d%%", drone.battery)
 
     logger.info("=" * 70)
 
@@ -331,6 +365,7 @@ async def run_patrol(simulate: bool = True, skip_ai: bool = False):
         len(DEMO_ROUTE.waypoints),
         n_faults,
     )
+    await drone.disconnect()
     await rover.disconnect()
 
     # Record patrol-level metrics
@@ -352,10 +387,16 @@ def main():
                         help="Connect to real RVR+ hardware")
     parser.add_argument("--skip-ai", action="store_true",
                         help="Skip AI analysis (just collect sensor data)")
+    parser.add_argument("--no-drone", action="store_true",
+                        help="Disable drone deployment")
     args = parser.parse_args()
 
     simulate = not args.real
-    asyncio.run(run_patrol(simulate=simulate, skip_ai=args.skip_ai))
+    asyncio.run(run_patrol(
+        simulate=simulate,
+        skip_ai=args.skip_ai,
+        enable_drone=not args.no_drone,
+    ))
 
 
 if __name__ == "__main__":
