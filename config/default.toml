@@ -16,7 +16,7 @@ sensor_type = "imu"
 
 [ai]
 # Model to use for vibration reasoning
-model = "gemma3"
+model = "batiai/gemma4-26b:q4"
 # Ollama host
 ollama_host = "http://localhost:11434"
 # Confidence threshold for fault alerts

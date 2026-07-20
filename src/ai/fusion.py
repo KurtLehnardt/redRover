@@ -393,19 +393,28 @@ class FusionAnalyzer:
         return "\n".join(lines)
 
     async def _query_ollama(self, prompt: str) -> str:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(
-                f"{self.ollama_host}/api/generate",
+                f"{self.ollama_host}/api/chat",
                 json={
                     "model": self.model,
-                    "system": FUSION_PROMPT,
-                    "prompt": prompt,
+                    "messages": [
+                        {"role": "system", "content": FUSION_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
                     "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 400},
+                    "options": {"temperature": 0.1, "num_predict": 1000},
                 },
             )
             response.raise_for_status()
-            return response.json()["response"]
+            data = response.json()
+            # Gemma 4+ uses thinking mode: reasoning in 'thinking', answer in 'content'
+            message = data.get("message", {})
+            content = message.get("content", "")
+            if not content:
+                # Fallback: try generate API format
+                content = data.get("response", "")
+            return content
 
     def _extract_json(self, text: str) -> str:
         text = text.strip()

@@ -50,12 +50,26 @@ def init_telemetry(
     trace.set_tracer_provider(tracer_provider)
 
     # --- Metrics ---
+    metric_readers = []
+
+    # Prometheus exporter (exposes /metrics for Grafana scraping)
+    try:
+        from opentelemetry.exporter.prometheus import PrometheusMetricReader
+        prometheus_reader = PrometheusMetricReader()
+        metric_readers.append(prometheus_reader)
+        logger.info("Prometheus metrics exporter enabled on :8080/metrics")
+    except ImportError:
+        logger.info("Prometheus exporter not available, using periodic exporter only")
+
+    # Periodic exporter (OTLP or console)
     metric_exporter = _create_metric_exporter(endpoint)
     metric_reader = PeriodicExportingMetricReader(
         metric_exporter,
         export_interval_millis=export_interval_ms,
     )
-    meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+    metric_readers.append(metric_reader)
+
+    meter_provider = MeterProvider(resource=resource, metric_readers=metric_readers)
     metrics.set_meter_provider(meter_provider)
 
     logger.info("Telemetry initialized: endpoint=%s", endpoint or "console")

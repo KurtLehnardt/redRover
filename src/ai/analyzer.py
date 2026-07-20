@@ -76,23 +76,30 @@ Frequency Band Energy:
 Diagnose this machine's condition."""
 
     async def _query_ollama(self, prompt: str) -> str:
-        """Query local Ollama instance."""
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        """Query local Ollama instance via chat API (supports thinking models)."""
+        async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(
-                f"{self.ollama_host}/api/generate",
+                f"{self.ollama_host}/api/chat",
                 json={
                     "model": self.model,
-                    "system": SYSTEM_PROMPT,
-                    "prompt": prompt,
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
                     "stream": False,
                     "options": {
                         "temperature": 0.1,
-                        "num_predict": 300,
+                        "num_predict": 1000,
                     },
                 },
             )
             response.raise_for_status()
-            return response.json()["response"]
+            data = response.json()
+            message = data.get("message", {})
+            content = message.get("content", "")
+            if not content:
+                content = data.get("response", "")
+            return content
 
     def _parse_response(self, station_id: str, response: str) -> DiagnosisResult:
         """Parse LLM JSON response into structured result."""

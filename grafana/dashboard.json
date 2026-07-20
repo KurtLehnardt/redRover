@@ -1,0 +1,177 @@
+{
+  "dashboard": {
+    "title": "redRover — Facility Health Monitor",
+    "uid": "redrover-main",
+    "tags": ["redrover", "predictive-maintenance"],
+    "timezone": "browser",
+    "refresh": "10s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Patrol Duration",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+        "targets": [
+          {
+            "expr": "rate(redrover_patrol_duration_seconds_sum[5m]) / rate(redrover_patrol_duration_seconds_count[5m])",
+            "legendFormat": "Avg Patrol Duration (s)"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Faults Detected",
+        "type": "stat",
+        "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
+        "targets": [
+          {
+            "expr": "increase(redrover_patrol_faults_detected_total[1h])",
+            "legendFormat": "Faults (1h)"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                { "value": 0, "color": "green" },
+                { "value": 2, "color": "yellow" },
+                { "value": 5, "color": "red" }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Sensor Failures",
+        "type": "stat",
+        "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+        "targets": [
+          {
+            "expr": "increase(redrover_sensor_failures_total[1h])",
+            "legendFormat": "{{sensor_type}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                { "value": 0, "color": "green" },
+                { "value": 1, "color": "red" }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "AI Inference Mode",
+        "type": "piechart",
+        "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+        "targets": [
+          {
+            "expr": "increase(redrover_ai_inference_count_total[1h])",
+            "legendFormat": "{{inference_mode}}"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "AI Inference Duration",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+        "targets": [
+          {
+            "expr": "rate(redrover_ai_inference_seconds_sum[5m]) / rate(redrover_ai_inference_seconds_count[5m])",
+            "legendFormat": "Avg Inference (s)"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "AI Confidence Distribution",
+        "type": "histogram",
+        "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+        "targets": [
+          {
+            "expr": "redrover_ai_confidence_bucket",
+            "legendFormat": "{{le}}"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Station Measurement Duration",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+        "targets": [
+          {
+            "expr": "rate(redrover_station_measurement_seconds_sum[5m]) / rate(redrover_station_measurement_seconds_count[5m])",
+            "legendFormat": "{{station_id}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Database Query Duration",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+        "targets": [
+          {
+            "expr": "rate(redrover_db_query_seconds_sum[5m]) / rate(redrover_db_query_seconds_count[5m])",
+            "legendFormat": "{{db_operation}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        }
+      },
+      {
+        "id": 9,
+        "title": "Faults by Type",
+        "type": "barchart",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+        "targets": [
+          {
+            "expr": "increase(redrover_ai_faults_detected_total[1h])",
+            "legendFormat": "{{fault_type}}"
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "DB Queries per Minute",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+        "targets": [
+          {
+            "expr": "rate(redrover_db_query_count_total[1m]) * 60",
+            "legendFormat": "{{db_operation}}"
+          }
+        ]
+      }
+    ]
+  },
+  "overwrite": true
+}

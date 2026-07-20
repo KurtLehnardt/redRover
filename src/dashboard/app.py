@@ -64,11 +64,12 @@ async def station_detail(request: Request, station_id: str):
 async def trigger_demo_patrol():
     """Trigger a simulated patrol for demo purposes."""
     from ..main import run_patrol
+    from ..ai.fusion import OverallHealth
     results = await run_patrol(simulate=True, skip_ai=False)
     return {
         "status": "complete",
-        "stations_visited": 4,
-        "faults_detected": len([r for r in results if r.fault_type != FaultType.NORMAL]),
+        "stations_visited": len(results),
+        "faults_detected": len([r for r in results if r.overall_health != OverallHealth.HEALTHY]),
     }
 
 
@@ -91,6 +92,17 @@ async def get_alerts():
 async def get_station_history(station_id: str):
     history = await db.get_station_history(station_id)
     return history
+
+
+@app.get("/metrics")
+async def prometheus_metrics():
+    """Prometheus metrics endpoint for Grafana scraping."""
+    try:
+        from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+        from starlette.responses import Response
+        return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    except ImportError:
+        return {"error": "prometheus_client not installed"}
 
 
 async def _check_ai_status() -> dict:
