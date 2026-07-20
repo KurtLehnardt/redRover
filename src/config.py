@@ -35,6 +35,13 @@ class DashboardConfig(BaseModel):
     port: int = 8080
 
 
+class TelemetryConfig(BaseModel):
+    enabled: bool = True
+    service_name: str = "redrover"
+    endpoint: str = ""
+    export_interval_ms: int = 5000
+
+
 class DatabaseConfig(BaseModel):
     path: str = "data/redRover.db"
 
@@ -45,6 +52,7 @@ class Settings(BaseSettings):
     ai: AIConfig = AIConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
     dashboard: DashboardConfig = DashboardConfig()
+    telemetry: TelemetryConfig = TelemetryConfig()
     database: DatabaseConfig = DatabaseConfig()
 
 

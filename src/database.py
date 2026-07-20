@@ -1,7 +1,10 @@
 """SQLite database for patrol logs and vibration history."""
 
+import time
 import aiosqlite
 from pathlib import Path
+
+from .telemetry import get_tracer, get_meter
 
 DB_SCHEMA = """
 CREATE TABLE IF NOT EXISTS patrols (
@@ -60,19 +63,39 @@ class Database:
     def __init__(self, path: str = "data/redRover.db"):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._tracer = get_tracer("redrover.db")
+        self._meter = get_meter("redrover.db")
+        self._query_duration = self._meter.create_histogram(
+            "redrover.db.query_seconds",
+            description="Database query duration",
+            unit="s",
+        )
+        self._query_counter = self._meter.create_counter(
+            "redrover.db.query_count",
+            description="Total database queries executed",
+        )
+
+    def _record_query(self, operation: str, start: float):
+        duration = time.time() - start
+        self._query_duration.record(duration, {"db.operation": operation})
+        self._query_counter.add(1, {"db.operation": operation})
 
     async def init(self):
+        start = time.time()
         async with aiosqlite.connect(self.path) as db:
             await db.executescript(DB_SCHEMA)
             await db.commit()
+        self._record_query("init", start)
 
     async def start_patrol(self, route_name: str, started_at: str) -> int:
+        start = time.time()
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute(
                 "INSERT INTO patrols (started_at, route_name) VALUES (?, ?)",
                 (started_at, route_name),
             )
             await db.commit()
+            self._record_query("start_patrol", start)
             return cursor.lastrowid
 
     async def complete_patrol(self, patrol_id: int, completed_at: str, stations: int, faults: int):
@@ -84,6 +107,7 @@ class Database:
             await db.commit()
 
     async def log_measurement(self, patrol_id: int, station_id: str, measured_at: str, features: dict) -> int:
+        start = time.time()
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute(
                 """INSERT INTO measurements
@@ -99,6 +123,7 @@ class Database:
                 ),
             )
             await db.commit()
+            self._record_query("log_measurement", start)
             return cursor.lastrowid
 
     async def log_diagnosis(self, measurement_id: int, station_id: str, diagnosis, diagnosed_at: str):
@@ -137,6 +162,26 @@ class Database:
             )
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
+
+    async def get_station_trend(self, station_id: str, limit: int = 5) -> list[dict]:
+        """Get recent measurement + diagnosis history for a station, oldest first.
+        Used to provide trend context to AI analysis."""
+        start = time.time()
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """SELECT m.measured_at, m.rms, m.peak, m.kurtosis, m.crest_factor,
+                          d.fault_type, d.severity, d.confidence
+                   FROM measurements m
+                   LEFT JOIN diagnoses d ON d.measurement_id = m.id
+                   WHERE m.station_id = ?
+                   ORDER BY m.id DESC LIMIT ?""",
+                (station_id, limit),
+            )
+            rows = await cursor.fetchall()
+            self._record_query("get_station_trend", start)
+            # Reverse to oldest-first order
+            return [dict(r) for r in reversed(rows)]
 
     async def get_active_faults(self) -> list[dict]:
         """Get most recent diagnosis for each station that has a fault."""
