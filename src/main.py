@@ -31,6 +31,7 @@ from .ai.fusion import FusionAnalyzer, OverallHealth
 from .drone.controller import DroneController, DroneType
 from .drone.orchestrator import DroneRoverOrchestrator
 from .database import Database
+from .alerting import AlertManager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -132,6 +133,7 @@ async def run_patrol(simulate: bool = True, skip_ai: bool = False, enable_drone:
     orchestrator = DroneRoverOrchestrator(rover=rover, drone=drone)
     db = Database(config.database.path)
     await db.init()
+    alert_mgr = AlertManager()
 
     logger.info("=" * 70)
     logger.info("redRover Multi-Modal Patrol — %s", datetime.now().isoformat())
@@ -260,6 +262,7 @@ async def run_patrol(simulate: bool = True, skip_ai: bool = False, enable_drone:
                     station_history=station_history,
                 )
                 results.append(diagnosis)
+                await alert_mgr.evaluate(diagnosis)
 
                 health_icon = {
                     OverallHealth.HEALTHY: "✓",
