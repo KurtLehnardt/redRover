@@ -79,6 +79,14 @@ async def get_faults():
     return faults
 
 
+@app.get("/api/alerts")
+async def get_alerts():
+    """Get recent alerts (from in-memory alert manager)."""
+    from ..alerting import AlertManager
+    mgr = AlertManager()
+    return mgr.recent_alerts
+
+
 @app.get("/api/station/{station_id}/history")
 async def get_station_history(station_id: str):
     history = await db.get_station_history(station_id)
