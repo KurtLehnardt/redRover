@@ -54,6 +54,55 @@ _DID_LEDS = 0x1A
 _CID_SET_LEDS_32 = 0x1A  # 32-bit mask — too large for BLE on RVR+
 _CID_SET_LEDS_8 = 0x1C   # 8-bit mask — fits in a single BLE write
 
+# Sensor streaming (DID=0x18)
+_DID_SENSOR = 0x18
+_CID_CONFIGURE_STREAMING = 0x39
+_CID_START_STREAMING = 0x3A
+_CID_STOP_STREAMING = 0x3B
+_CID_CLEAR_STREAMING = 0x3C
+_CID_STREAMING_DATA = 0x3D
+_CID_RESET_LOCATOR = 0x13
+
+# Sensor service IDs (16-bit)
+_SENSOR_ACCELEROMETER = 0x0002
+_SENSOR_GYROSCOPE = 0x0004
+_SENSOR_LOCATOR = 0x0006
+_SENSOR_VELOCITY = 0x0007
+_SENSOR_SPEED = 0x0008
+_SENSOR_ENCODERS = 0x000B
+_SENSOR_IMU = 0x0001
+_SENSOR_COLOR = 0x0003
+_SENSOR_AMBIENT_LIGHT = 0x000A
+
+# Data size codes
+_DATA_SIZE_8BIT = 0x00
+_DATA_SIZE_16BIT = 0x01
+_DATA_SIZE_32BIT = 0x02
+
+# Sensor normalization ranges (min, max, num_components)
+_SENSOR_RANGES = {
+    0x0002: (-16.0, 16.0, 3),      # Accelerometer: x,y,z in g
+    0x0004: (-2000.0, 2000.0, 3),   # Gyroscope: x,y,z in deg/s
+    0x0006: (-16000.0, 16000.0, 2), # Locator: x,y in meters
+    0x0007: (-5.0, 5.0, 2),         # Velocity: vx,vy in m/s
+    0x0008: (0.0, 5.0, 1),          # Speed: m/s
+    0x0001: (-180.0, 180.0, 3),     # IMU: pitch,roll,yaw (yaw range is -180..180 but pitch is -180..180, roll -90..90)
+    0x000B: (0, 4294967295, 2),     # Encoders: left,right ticks (raw uint32)
+}
+
+# Mapping from sensor ID to friendly name
+_SENSOR_NAMES = {
+    0x0002: 'accelerometer',
+    0x0004: 'gyroscope',
+    0x0006: 'locator',
+    0x0007: 'velocity',
+    0x0008: 'speed',
+    0x000B: 'encoders',
+    0x0001: 'imu',
+    0x0003: 'color',
+    0x000A: 'ambient_light',
+}
+
 
 class _SpheroV2Protocol:
     """Low-level Sphero V2 BLE packet builder / parser."""
@@ -210,6 +259,19 @@ class RoverController:
         self._proto = None        # _SpheroV2Protocol (ble mode)
         self._api_char = None     # cached BLE characteristic object
 
+        # Sensor streaming state
+        self._sensor_data = {
+            'locator': (0.0, 0.0),             # x, y in meters
+            'velocity': (0.0, 0.0),            # vx, vy in m/s
+            'accelerometer': (0.0, 0.0, 0.0),  # ax, ay, az in g
+            'gyroscope': (0.0, 0.0, 0.0),      # gx, gy, gz in deg/s
+        }
+        self._streaming = False
+        self._sensor_callbacks = []  # list of async callbacks
+        # Tracks which sensor IDs are configured in each streaming slot (token)
+        # token -> list of sensor IDs, in order configured
+        self._streaming_slots = {}
+
     # -- BLE helpers --------------------------------------------------------
 
     async def _ble_send(
@@ -240,9 +302,90 @@ class RoverController:
         await self._ble_client.write_gatt_char(char, pkt, response=False)
 
     def _ble_notification_handler(self, _sender, data: bytearray):
-        """Callback fed to bleak start_notify."""
+        """Callback fed to bleak start_notify.
+
+        Distinguishes streaming data notifications (DID=0x18, CID=0x3D)
+        from regular command responses and routes them accordingly.
+        """
         logger.debug("BLE RX: %s", data.hex())
-        self._proto.feed(bytes(data))
+        raw = bytes(data)
+
+        # Try to detect streaming data before feeding to the protocol parser.
+        # Quick peek: find SOP/EOP, unescape, check DID/CID.
+        sop_idx = raw.find(bytes([_SOP]))
+        eop_idx = raw.find(bytes([_EOP]), sop_idx + 1) if sop_idx != -1 else -1
+        if sop_idx != -1 and eop_idx != -1:
+            inner = _SpheroV2Protocol._unescape(raw[sop_idx + 1:eop_idx])
+            # Payload layout: FLAGS TID SID DID CID SEQ [DATA...] CHK
+            if len(inner) >= 7:
+                did = inner[3]
+                cid = inner[4]
+                if did == _DID_SENSOR and cid == _CID_STREAMING_DATA:
+                    self._handle_streaming_data(inner)
+                    return
+
+        # Not streaming data — feed to protocol for command response matching
+        self._proto.feed(raw)
+
+    def _handle_streaming_data(self, payload: bytes):
+        """Parse a streaming data notification payload and update sensor state.
+
+        ``payload`` is the unescaped inner bytes (FLAGS TID SID DID CID SEQ DATA... CHK).
+        """
+        data = payload[6:-1]  # strip header (6 bytes) and checksum (1 byte)
+        if len(data) < 1:
+            return
+
+        token = data[0]
+        sensor_bytes = data[1:]
+
+        slot_sensors = self._streaming_slots.get(token, [])
+        if not slot_sensors:
+            logger.debug("Streaming data for unknown token %d (%d bytes)", token, len(sensor_bytes))
+            return
+
+        offset = 0
+        for sensor_id in slot_sensors:
+            range_info = _SENSOR_RANGES.get(sensor_id)
+            if range_info is None:
+                continue
+            min_val, max_val, num_components = range_info
+            # We always configure 32-bit data
+            bytes_per_component = 4
+            bits = 32
+
+            values = []
+            for _ in range(num_components):
+                if offset + bytes_per_component > len(sensor_bytes):
+                    logger.debug("Streaming data truncated for sensor 0x%04X", sensor_id)
+                    return
+                raw_uint = int.from_bytes(
+                    sensor_bytes[offset:offset + bytes_per_component], 'big', signed=False,
+                )
+                offset += bytes_per_component
+                max_int = (1 << bits) - 1
+                normalized = raw_uint / max_int if max_int else 0.0
+                value = normalized * (max_val - min_val) + min_val
+                values.append(value)
+
+            name = _SENSOR_NAMES.get(sensor_id)
+            if name and name in self._sensor_data:
+                self._sensor_data[name] = tuple(values)
+
+        # Also update internal position/heading from locator data
+        if 'locator' in self._sensor_data:
+            self._position = self._sensor_data['locator']
+
+        # Fire registered callbacks
+        if self._sensor_callbacks:
+            loop = None
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                pass
+            if loop:
+                for cb in self._sensor_callbacks:
+                    loop.create_task(cb(dict(self._sensor_data)))
 
     # -- connect / disconnect -----------------------------------------------
 
@@ -440,6 +583,117 @@ class RoverController:
             logger.info("Arrived at %s (UART)", waypoint.station_id)
 
         self.state = RoverState.DWELLING
+
+    # -- sensor streaming ------------------------------------------------------
+
+    async def start_sensor_streaming(self, period_ms: int = 100):
+        """Configure and start sensor streaming on the ST processor.
+
+        Slot 1 (token 0): accelerometer + gyroscope, 32-bit
+        Slot 2 (token 1): locator + velocity, 32-bit
+
+        ``period_ms`` sets the streaming interval in milliseconds.
+        """
+        if self.simulate:
+            self._streaming = True
+            logger.info("Sensor streaming started (simulated, period=%dms)", period_ms)
+            return
+
+        if not self._ble_client:
+            logger.warning("start_sensor_streaming: no BLE connection")
+            return
+
+        # Stop any existing streaming first
+        await self.stop_sensor_streaming()
+
+        # -- Slot 1 (token=0): accelerometer (0x0002) + gyroscope (0x0004) --
+        token_0 = 0
+        slot1_data = bytes([
+            token_0,
+            (_SENSOR_ACCELEROMETER >> 8) & 0xFF, _SENSOR_ACCELEROMETER & 0xFF, _DATA_SIZE_32BIT,
+            (_SENSOR_GYROSCOPE >> 8) & 0xFF, _SENSOR_GYROSCOPE & 0xFF, _DATA_SIZE_32BIT,
+        ])
+        await self._ble_send(
+            _DID_SENSOR, _CID_CONFIGURE_STREAMING, _TID_ST, data=slot1_data,
+        )
+        self._streaming_slots[token_0] = [_SENSOR_ACCELEROMETER, _SENSOR_GYROSCOPE]
+
+        # -- Slot 2 (token=1): locator (0x0006) + velocity (0x0007) --
+        token_1 = 1
+        slot2_data = bytes([
+            token_1,
+            (_SENSOR_LOCATOR >> 8) & 0xFF, _SENSOR_LOCATOR & 0xFF, _DATA_SIZE_32BIT,
+            (_SENSOR_VELOCITY >> 8) & 0xFF, _SENSOR_VELOCITY & 0xFF, _DATA_SIZE_32BIT,
+        ])
+        await self._ble_send(
+            _DID_SENSOR, _CID_CONFIGURE_STREAMING, _TID_ST, data=slot2_data,
+        )
+        self._streaming_slots[token_1] = [_SENSOR_LOCATOR, _SENSOR_VELOCITY]
+
+        # -- Start streaming --
+        period_hi = (period_ms >> 8) & 0xFF
+        period_lo = period_ms & 0xFF
+        await self._ble_send(
+            _DID_SENSOR, _CID_START_STREAMING, _TID_ST,
+            data=bytes([period_hi, period_lo]),
+        )
+        self._streaming = True
+        logger.info("Sensor streaming started (period=%dms)", period_ms)
+
+    async def stop_sensor_streaming(self):
+        """Stop and clear sensor streaming on the ST processor."""
+        if self.simulate:
+            self._streaming = False
+            logger.info("Sensor streaming stopped (simulated)")
+            return
+
+        if not self._ble_client:
+            self._streaming = False
+            return
+
+        try:
+            await self._ble_send(
+                _DID_SENSOR, _CID_STOP_STREAMING, _TID_ST, timeout=2.0,
+            )
+        except Exception as e:
+            logger.debug("stop_streaming warning: %s", e)
+        try:
+            await self._ble_send(
+                _DID_SENSOR, _CID_CLEAR_STREAMING, _TID_ST, timeout=2.0,
+            )
+        except Exception as e:
+            logger.debug("clear_streaming warning: %s", e)
+
+        self._streaming = False
+        self._streaming_slots.clear()
+        logger.info("Sensor streaming stopped")
+
+    async def reset_locator(self):
+        """Reset the locator X and Y coordinates to zero."""
+        logger.info("Resetting locator origin")
+        if self.simulate:
+            self._sensor_data['locator'] = (0.0, 0.0)
+            self._position = (0.0, 0.0)
+            return
+        if self._ble_client:
+            await self._ble_send(
+                _DID_SENSOR, _CID_RESET_LOCATOR, _TID_ST,
+            )
+            self._sensor_data['locator'] = (0.0, 0.0)
+            self._position = (0.0, 0.0)
+
+    def add_sensor_callback(self, callback):
+        """Register an async callback that fires on each sensor data update.
+
+        The callback receives a dict with the latest sensor values:
+        ``{'locator': (x,y), 'velocity': (vx,vy), 'accelerometer': (ax,ay,az), 'gyroscope': (gx,gy,gz)}``
+        """
+        self._sensor_callbacks.append(callback)
+
+    @property
+    def sensor_data(self) -> dict:
+        """Return the latest sensor data dict."""
+        return self._sensor_data
 
     # -- LED control ----------------------------------------------------------
 
