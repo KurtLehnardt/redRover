@@ -26,7 +26,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.rover.controller import RoverController, Waypoint
+from src.rover.controller import RoverController, Waypoint  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -252,17 +252,21 @@ class RoomExplorer:
     # -- direction choosing (frontier-based) --------------------------------
 
     def _choose_heading(self, x: float, y: float) -> float:
-        """Pick the heading (degrees) toward the direction with the most
-        unknown cells in a ~1m radius fan."""
+        """Pick the RVR+ heading (degrees) toward the direction with the most
+        unknown cells in a ~1m radius fan.
+
+        RVR+ heading convention: 0°=+Y, 90°=+X (clockwise from Y-axis).
+        """
         best_heading = self._heading
         best_unknown = -1
 
         for candidate_deg in range(0, 360, 30):
-            rad = math.radians(candidate_deg)
+            # Convert RVR+ heading to trig angle for grid lookup
+            trig_rad = math.radians(90.0 - candidate_deg)
             unknown_count = 0
             for dist_cm in range(10, 100, 10):
-                px = x + (dist_cm / 100.0) * math.cos(rad)
-                py = y + (dist_cm / 100.0) * math.sin(rad)
+                px = x + (dist_cm / 100.0) * math.cos(trig_rad)
+                py = y + (dist_cm / 100.0) * math.sin(trig_rad)
                 r, c = self.grid._world_to_cell(px, py)
                 if self.grid._in_bounds(r, c) and self.grid.grid[r, c] == CELL_UNKNOWN:
                     unknown_count += 1
@@ -308,6 +312,9 @@ class RoomExplorer:
 
         self._heading = 0.0
         self._stall_start = None
+        # Grace period: ignore stalls for the first N seconds while rover accelerates
+        drive_start = time.monotonic()
+        GRACE_PERIOD = 3.0
 
         try:
             while self._running and (time.monotonic() - start_time) < self.duration:
@@ -318,58 +325,62 @@ class RoomExplorer:
                 vel_mag = math.sqrt(vx ** 2 + vy ** 2)
                 accel_mag = math.sqrt(ax ** 2 + ay ** 2 + az ** 2)
 
-                # -- Bump detection --
+                elapsed_since_drive = time.monotonic() - drive_start
+
+                # -- Bump detection (always active) --
                 if accel_mag > 2.0:
                     logger.info("BUMP detected (accel=%.2fg) at (%.2f, %.2f)", accel_mag, x, y)
-                    # Mark wall slightly ahead of current position
-                    wall_x = x + 0.05 * math.cos(math.radians(self._heading))
-                    wall_y = y + 0.05 * math.sin(math.radians(self._heading))
+                    _trig = math.radians(90.0 - self._heading)
+                    wall_x = x + 0.05 * math.cos(_trig)
+                    wall_y = y + 0.05 * math.sin(_trig)
                     self.grid.mark_wall(wall_x, wall_y)
-                    await self.rover.stop()
+                    try:
+                        await self.rover.stop()
+                    except Exception as e:
+                        logger.warning("stop() failed: %s", e)
                     await asyncio.sleep(0.3)
                     self._heading = self._random_turn()
                     self._stall_start = None
+                    drive_start = time.monotonic()
 
-                # -- Stall detection --
-                elif self.speed > 0 and vel_mag < 0.02:
+                # -- Stall detection (skip during grace period) --
+                elif elapsed_since_drive > GRACE_PERIOD and self.speed > 0 and vel_mag < 0.02:
                     if self._stall_start is None:
                         self._stall_start = time.monotonic()
-                    elif time.monotonic() - self._stall_start > 0.5:
+                    elif time.monotonic() - self._stall_start > 0.8:
                         logger.info("STALL detected at (%.2f, %.2f)", x, y)
-                        wall_x = x + 0.05 * math.cos(math.radians(self._heading))
-                        wall_y = y + 0.05 * math.sin(math.radians(self._heading))
+                        _trig = math.radians(90.0 - self._heading)
+                        wall_x = x + 0.05 * math.cos(_trig)
+                        wall_y = y + 0.05 * math.sin(_trig)
                         self.grid.mark_wall(wall_x, wall_y)
-                        await self.rover.stop()
+                        try:
+                            await self.rover.stop()
+                        except Exception as e:
+                            logger.warning("stop() failed: %s", e)
                         await asyncio.sleep(0.3)
                         self._heading = self._random_turn()
                         self._stall_start = None
+                        drive_start = time.monotonic()
                 else:
                     self._stall_start = None
 
-                # -- Boundary check --
-                if abs(x) > self.room_bounds or abs(y) > self.room_bounds:
-                    logger.info("Boundary reached at (%.2f, %.2f) — turning back", x, y)
-                    self._heading = (math.degrees(math.atan2(-y, -x))) % 360
-
-                # -- Frontier-based direction --
-                if self._stall_start is None:  # only re-choose if not stalled
+                # -- Boundary check (hard override — skip frontier if out of bounds) --
+                out_of_bounds = abs(x) > self.room_bounds or abs(y) > self.room_bounds
+                if out_of_bounds:
+                    # RVR+ heading: 0=+Y, 90=+X  (atan2 convention rotated 90°)
+                    self._heading = (90.0 - math.degrees(math.atan2(-y, -x))) % 360
+                elif self._stall_start is None:
+                    # -- Frontier-based direction (only when in bounds) --
                     candidate = self._choose_heading(x, y)
-                    # Blend toward frontier heading to avoid jitter
                     diff = (candidate - self._heading + 180) % 360 - 180
                     if abs(diff) > 20:
                         self._heading = (self._heading + diff * 0.3) % 360
 
-                # -- Drive --
-                heading_int = int(self._heading) % 360
-                heading_msb = (heading_int >> 8) & 0xFF
-                heading_lsb = heading_int & 0xFF
-                from src.rover.controller import (
-                    _DID_DRIVE, _CID_DRIVE_WITH_HEADING, _TID_ST,
-                )
-                await self.rover._ble_send_no_response(
-                    _DID_DRIVE, _CID_DRIVE_WITH_HEADING, _TID_ST,
-                    data=bytes([self.speed & 0xFF, heading_msb, heading_lsb, 0]),
-                )
+                # -- Drive using public API --
+                try:
+                    await self.rover.drive_with_heading(self.speed, int(self._heading))
+                except Exception as e:
+                    logger.warning("drive command failed: %s", e)
 
                 # -- Status print --
                 now = time.monotonic()
@@ -387,7 +398,10 @@ class RoomExplorer:
                 await asyncio.sleep(0.1)  # match streaming period
 
         finally:
-            await self.rover.stop()
+            try:
+                await self.rover.stop()
+            except Exception:
+                pass
 
     async def _run_simulated(self, start_time: float):
         """Exploration loop using the simulated environment."""
@@ -422,8 +436,9 @@ class RoomExplorer:
 
                 # -- Bump detection --
                 if accel_mag > 2.0 or hit_wall:
-                    wall_x = x + 0.05 * math.cos(math.radians(self._heading))
-                    wall_y = y + 0.05 * math.sin(math.radians(self._heading))
+                    _trig = math.radians(90.0 - self._heading)
+                    wall_x = x + 0.05 * math.cos(_trig)
+                    wall_y = y + 0.05 * math.sin(_trig)
                     self.grid.mark_wall(wall_x, wall_y)
                     self._sim_env.stop()
                     self._heading = self._random_turn()
@@ -434,8 +449,9 @@ class RoomExplorer:
                     if self._stall_start is None:
                         self._stall_start = time.monotonic()
                     elif time.monotonic() - self._stall_start > 0.5:
-                        wall_x = x + 0.05 * math.cos(math.radians(self._heading))
-                        wall_y = y + 0.05 * math.sin(math.radians(self._heading))
+                        _trig = math.radians(90.0 - self._heading)
+                        wall_x = x + 0.05 * math.cos(_trig)
+                        wall_y = y + 0.05 * math.sin(_trig)
                         self.grid.mark_wall(wall_x, wall_y)
                         self._sim_env.stop()
                         self._heading = self._random_turn()
@@ -443,12 +459,12 @@ class RoomExplorer:
                 else:
                     self._stall_start = None
 
-                # -- Boundary --
-                if abs(x) > self.room_bounds or abs(y) > self.room_bounds:
-                    self._heading = (math.degrees(math.atan2(-y, -x))) % 360
-
-                # -- Frontier heading --
-                if self._stall_start is None:
+                # -- Boundary (hard override) --
+                out_of_bounds = abs(x) > self.room_bounds or abs(y) > self.room_bounds
+                if out_of_bounds:
+                    self._heading = (90.0 - math.degrees(math.atan2(-y, -x))) % 360
+                elif self._stall_start is None:
+                    # -- Frontier heading (only when in bounds) --
                     candidate = self._choose_heading(x, y)
                     diff = (candidate - self._heading + 180) % 360 - 180
                     if abs(diff) > 20:
@@ -541,15 +557,17 @@ async def main():
         pass
     finally:
         # Stop streaming if running
-        if rover._streaming:
-            print("Stopping sensor streaming...")
-            await rover.stop_sensor_streaming()
+        try:
+            if rover._streaming:
+                print("Stopping sensor streaming...")
+                await rover.stop_sensor_streaming()
+        except Exception as e:
+            logger.warning("Stop streaming failed: %s", e)
 
         # Attempt return to origin
         try:
             print("Attempting return to origin...")
             if args.simulate:
-                # In sim mode just note final position
                 x, y = rover.position
                 print(f"  Final position: ({x:.2f}, {y:.2f})")
             else:
@@ -558,7 +576,10 @@ async def main():
             logger.warning("Return home failed: %s", e)
 
         # Disconnect
-        await rover.disconnect()
+        try:
+            await rover.disconnect()
+        except Exception as e:
+            logger.warning("Disconnect failed: %s", e)
 
         # Save map
         s = grid.stats()

@@ -271,6 +271,7 @@ class RoverController:
         # Tracks which sensor IDs are configured in each streaming slot (token)
         # token -> list of sensor IDs, in order configured
         self._streaming_slots = {}
+        self._ble_rx_buffer = bytearray()  # reassembly buffer for fragmented packets
 
     # -- BLE helpers --------------------------------------------------------
 
@@ -304,28 +305,46 @@ class RoverController:
     def _ble_notification_handler(self, _sender, data: bytearray):
         """Callback fed to bleak start_notify.
 
-        Distinguishes streaming data notifications (DID=0x18, CID=0x3D)
-        from regular command responses and routes them accordingly.
+        BLE notifications may be fragmented (MTU ~20 bytes).  This method
+        accumulates bytes in ``_ble_rx_buffer`` and processes each complete
+        SOP...EOP packet.  Streaming data (DID=0x18, CID=0x3D) is routed
+        to ``_handle_streaming_data``; everything else goes to the protocol
+        parser for command response matching.
         """
-        logger.debug("BLE RX: %s", data.hex())
-        raw = bytes(data)
+        logger.debug("BLE RX (%d bytes): %s", len(data), data.hex())
+        self._ble_rx_buffer.extend(data)
 
-        # Try to detect streaming data before feeding to the protocol parser.
-        # Quick peek: find SOP/EOP, unescape, check DID/CID.
-        sop_idx = raw.find(bytes([_SOP]))
-        eop_idx = raw.find(bytes([_EOP]), sop_idx + 1) if sop_idx != -1 else -1
-        if sop_idx != -1 and eop_idx != -1:
-            inner = _SpheroV2Protocol._unescape(raw[sop_idx + 1:eop_idx])
+        # Process all complete packets in the buffer
+        while True:
+            sop_idx = self._ble_rx_buffer.find(bytes([_SOP]))
+            if sop_idx == -1:
+                self._ble_rx_buffer.clear()
+                break
+            # Discard any bytes before SOP
+            if sop_idx > 0:
+                del self._ble_rx_buffer[:sop_idx]
+
+            eop_idx = self._ble_rx_buffer.find(bytes([_EOP]), 1)
+            if eop_idx == -1:
+                # Incomplete packet — wait for more data
+                break
+
+            # Extract complete packet (including SOP and EOP)
+            pkt = bytes(self._ble_rx_buffer[:eop_idx + 1])
+            del self._ble_rx_buffer[:eop_idx + 1]
+
+            # Unescape inner bytes (between SOP and EOP)
+            inner = _SpheroV2Protocol._unescape(pkt[1:-1])
             # Payload layout: FLAGS TID SID DID CID SEQ [DATA...] CHK
             if len(inner) >= 7:
                 did = inner[3]
                 cid = inner[4]
                 if did == _DID_SENSOR and cid == _CID_STREAMING_DATA:
                     self._handle_streaming_data(inner)
-                    return
+                    continue
 
-        # Not streaming data — feed to protocol for command response matching
-        self._proto.feed(raw)
+            # Not streaming data — feed to protocol for command response matching
+            self._proto.feed(pkt)
 
     def _handle_streaming_data(self, payload: bytes):
         """Parse a streaming data notification payload and update sensor state.
@@ -797,6 +816,20 @@ class RoverController:
                 left_mode=left_mode, left_speed=left_speed,
                 right_mode=right_mode, right_speed=right_speed,
             )
+
+    async def drive_with_heading(self, speed: int, heading: int):
+        """Drive at *speed* (0-255) on *heading* (0-359 degrees)."""
+        heading = int(heading) % 360
+        self._heading = float(heading)
+        if self.simulate:
+            return
+        if self._ble_client:
+            await self._ble_send(
+                _DID_DRIVE, _CID_DRIVE_WITH_HEADING, _TID_ST,
+                data=bytes([speed & 0xFF, (heading >> 8) & 0xFF, heading & 0xFF, 0]),
+            )
+        elif self._rvr:
+            await self._rvr.drive_with_heading(speed=speed, heading=heading, flags=0)
 
     async def stop(self):
         """Immediately stop all motors."""
