@@ -582,6 +582,9 @@ async def main():
             logger.warning("Disconnect failed: %s", e)
 
         # Save map
+        import json
+        from datetime import datetime
+
         s = grid.stats()
         title = (
             f"Room Map - {s['free']} free, {s['wall']} wall cells "
@@ -592,6 +595,17 @@ async def main():
             output_path = os.path.join(str(_PROJECT_ROOT), output_path)
         grid.save_png(output_path, title=title)
 
+        # Save stats JSON alongside the PNG
+        stats_path = os.path.splitext(output_path)[0] + '_stats.json'
+        s["timestamp"] = datetime.now().isoformat()
+        s["status"] = "complete"
+        s["duration_requested"] = args.duration
+        s["speed"] = args.speed
+        s["room_bounds"] = args.room_bounds
+        s["path_points"] = len(grid.path)
+        with open(stats_path, 'w') as f:
+            json.dump(s, f, indent=2)
+
         # Print summary
         print("\n=== Exploration Summary ===")
         print(f"  Free cells:     {s['free']}")
@@ -600,6 +614,7 @@ async def main():
         print(f"  Coverage:       {s['coverage_pct']:.1f}%")
         print(f"  Area explored:  {s['area_free_m2']:.2f} m2")
         print(f"  Map saved to:   {output_path}")
+        print(f"  Stats saved to: {stats_path}")
 
 
 if __name__ == '__main__':

@@ -1,0 +1,14 @@
+{
+  "total_cells": 14400,
+  "free": 40,
+  "wall": 17,
+  "unknown": 14343,
+  "coverage_pct": 0.39583333333333337,
+  "area_free_m2": 0.10000000000000002,
+  "timestamp": "2026-07-26T22:02:53.287526",
+  "status": "complete",
+  "duration_requested": 10.0,
+  "speed": 50,
+  "room_bounds": 3.0,
+  "path_points": 98
+}
