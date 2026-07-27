@@ -25,6 +25,9 @@ Thumbs.db
 models/*.bin
 models/*.gguf
 data/raw/
+data/*.db
+data/room_map.png
+data/room_map_stats.json
 *.wav
 *.mp3
 
