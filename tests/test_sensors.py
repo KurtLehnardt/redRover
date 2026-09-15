@@ -106,9 +106,7 @@ def test_thermal_normal_no_hotspots():
 
 def test_thermal_hotspot_detected():
     """Hotspot frame with severity 0.8 has at least one hotspot."""
-    frame = generate_thermal_frame(
-        fault_type=ThermalFaultType.HOTSPOT, severity=0.8, ambient=22.0
-    )
+    frame = generate_thermal_frame(fault_type=ThermalFaultType.HOTSPOT, severity=0.8, ambient=22.0)
     hotspots = detect_hotspots(frame)
     assert len(hotspots) >= 1
 
@@ -164,14 +162,14 @@ def test_thermal_gradient_detection():
     normal_features = extract_thermal_features(normal)
     hotspot_features = extract_thermal_features(hotspot)
 
-    assert hotspot_features["max_gradient_c_per_pixel"] > normal_features["max_gradient_c_per_pixel"]
+    assert (
+        hotspot_features["max_gradient_c_per_pixel"] > normal_features["max_gradient_c_per_pixel"]
+    )
 
 
 def test_detect_hotspots_threshold():
     """Hotspots only returned when threshold is exceeded."""
-    frame = generate_thermal_frame(
-        fault_type=ThermalFaultType.HOTSPOT, severity=0.8, ambient=22.0
-    )
+    frame = generate_thermal_frame(fault_type=ThermalFaultType.HOTSPOT, severity=0.8, ambient=22.0)
 
     # With a very high threshold, no hotspots should be detected
     hotspots_strict = detect_hotspots(frame, threshold_delta=200.0)
@@ -217,8 +215,11 @@ def test_thermal_frame_from_explicit_pixels():
 def test_mel_filterbank_handles_short_signals():
     """A signal shorter than n_fft must not index past the spectrum."""
     short = AcousticSample(
-        "M-1", 0.0, np.random.randn(512).astype(np.float32),
-        sample_rate=96000, duration=512 / 96000,
+        "M-1",
+        0.0,
+        np.random.randn(512).astype(np.float32),
+        sample_rate=96000,
+        duration=512 / 96000,
     )
     mel = compute_mel_spectrogram(short, n_mels=16, n_fft=2048)
     assert mel.shape[0] == 16

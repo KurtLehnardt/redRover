@@ -84,16 +84,20 @@ def test_alerts_endpoint_shares_the_process_alert_manager(client):
 
     manager = get_alert_manager()
     asyncio.run(
-        manager.evaluate(FusedDiagnosis(
-            station_id="A-1",
-            overall_health=OverallHealth.CRITICAL,
-            overall_confidence=0.9,
-            modality_results=[ModalityResult("vibration", True, "bearing_fault", 0.9, "severe")],
-            correlated_faults=["bearing_fault"],
-            recommendation="replace",
-            priority=1,
-            reasoning="test",
-        ))
+        manager.evaluate(
+            FusedDiagnosis(
+                station_id="A-1",
+                overall_health=OverallHealth.CRITICAL,
+                overall_confidence=0.9,
+                modality_results=[
+                    ModalityResult("vibration", True, "bearing_fault", 0.9, "severe")
+                ],
+                correlated_faults=["bearing_fault"],
+                recommendation="replace",
+                priority=1,
+                reasoning="test",
+            )
+        )
     )
 
     payload = client.get("/api/alerts").json()
@@ -198,9 +202,111 @@ def test_faults_endpoint_is_json_and_the_page_renders_it_client_side():
     """
     from pathlib import Path
 
-    index = (Path(__file__).resolve().parent.parent
-             / "src/dashboard/templates/index.html").read_text()
+    index = (
+        Path(__file__).resolve().parent.parent / "src/dashboard/templates/index.html"
+    ).read_text()
     assert "hx-get" not in index and "hx-swap" not in index
     # It fetches the JSON and builds the rows itself.
     assert 'fetch("/api/faults"' in index
     assert "renderFaults" in index
+
+
+# === Templates must survive the data the database actually produces ===
+
+
+def _render(name: str, **context) -> str:
+    from jinja2 import Environment, FileSystemLoader
+
+    from src.dashboard.app import TEMPLATES_DIR
+
+    env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), autoescape=True)
+    return env.get_template(name).render(**context)
+
+
+def test_station_page_renders_a_measurement_with_no_diagnosis():
+    """The LEFT JOIN yields NULL diagnosis columns; that is the normal case.
+
+    Regression: the confidence cell put its percent sign outside the
+    conditional, so every undiagnosed row rendered a bare "—%".
+    """
+    html = _render(
+        "station.html",
+        station_id="M-001",
+        history=[
+            {
+                "measured_at": "2026-09-15T00:00",
+                "rms": 0.5,
+                "peak": 1.0,
+                "kurtosis": 0.2,
+                "sample_rate_hz": 4000.0,
+                "bearing_analysis_available": 1,
+                "fault_type": None,
+                "severity": None,
+                "confidence": None,
+            }
+        ],
+    )
+    assert "—%" not in html
+    assert "<td>—</td>" in html
+
+
+def test_station_page_survives_null_numerics():
+    """Regression: formatting NULL raised TypeError and 500'd the page."""
+    html = _render(
+        "station.html",
+        station_id="M-001",
+        history=[
+            {
+                "measured_at": "2026-09-15T00:00",
+                "rms": None,
+                "peak": None,
+                "kurtosis": None,
+                "sample_rate_hz": None,
+                "bearing_analysis_available": None,
+                "fault_type": None,
+                "severity": None,
+                "confidence": None,
+            }
+        ],
+    )
+    assert "M-001" in html
+
+
+def test_station_page_flags_a_sample_rate_too_low_for_bearings():
+    """A history table that hides the rate invites reading every row alike."""
+    html = _render(
+        "station.html",
+        station_id="M-001",
+        history=[
+            {
+                "measured_at": "t",
+                "rms": 0.5,
+                "peak": 1.0,
+                "kurtosis": 6.0,
+                "sample_rate_hz": 50.0,
+                "bearing_analysis_available": 0,
+                "fault_type": "looseness",
+                "severity": "incipient",
+                "confidence": 0.5,
+            }
+        ],
+    )
+    assert "50 Hz" in html
+    assert "low" in html
+
+
+def test_station_page_renders_an_empty_history():
+    html = _render("station.html", station_id="M-404", history=[])
+    assert "No measurements" in html
+
+
+def test_index_renders_with_no_data():
+    html = _render(
+        "index.html",
+        patrols=[],
+        faults=[],
+        now="now",
+        control_enabled=False,
+        authenticated=False,
+    )
+    assert "No active faults" in html

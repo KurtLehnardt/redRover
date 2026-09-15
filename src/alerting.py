@@ -79,7 +79,8 @@ class AlertManager:
 
         logger.warning(
             "ALERT [%s] Station %s: %s (P%d) — %s",
-            level, diagnosis.station_id,
+            level,
+            diagnosis.station_id,
             ", ".join(diagnosis.correlated_faults) or "unspecified",
             diagnosis.priority,
             diagnosis.recommendation,
@@ -116,6 +117,7 @@ def get_alert_manager(config=None) -> AlertManager:
     if _manager is None:
         if config is None:
             from .config import load_config
+
             config = load_config()
         _manager = AlertManager.from_config(config)
     return _manager

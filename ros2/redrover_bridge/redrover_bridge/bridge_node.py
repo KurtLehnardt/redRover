@@ -41,6 +41,7 @@ try:
     from sensor_msgs.msg import BatteryState, Imu, JointState, Range, Temperature
     from std_msgs.msg import Bool, Float32MultiArray
     from std_srvs.srv import SetBool
+
     ROS_AVAILABLE = True
 except ImportError:  # pragma: no cover - the module is importable without ROS
     ROS_AVAILABLE = False
@@ -135,7 +136,8 @@ class RedRoverBridge(Node):
                 self._publishers[sensor.descriptor.id] = ("imu", kind)
             elif kind is wire.SensorKind.DISTANCE:
                 self._publishers[sensor.descriptor.id] = (
-                    "range", self.create_publisher(Range, f"~/range/{topic}", 10),
+                    "range",
+                    self.create_publisher(Range, f"~/range/{topic}", 10),
                 )
             elif kind is wire.SensorKind.TEMPERATURE:
                 self._publishers[sensor.descriptor.id] = (
@@ -144,17 +146,17 @@ class RedRoverBridge(Node):
                 )
             elif kind is wire.SensorKind.BATTERY:
                 self._publishers[sensor.descriptor.id] = (
-                    "battery", self.create_publisher(BatteryState, "~/battery", 10),
+                    "battery",
+                    self.create_publisher(BatteryState, "~/battery", 10),
                 )
             elif kind is wire.SensorKind.BUMPER:
                 self._publishers[sensor.descriptor.id] = (
-                    "bumper", self.create_publisher(Bool, f"~/bumper/{topic}", 10),
+                    "bumper",
+                    self.create_publisher(Bool, f"~/bumper/{topic}", 10),
                 )
             elif kind is wire.SensorKind.ENCODER:
                 if self._joint_publisher is None:
-                    self._joint_publisher = self.create_publisher(
-                        JointState, "~/joint_states", 10
-                    )
+                    self._joint_publisher = self.create_publisher(JointState, "~/joint_states", 10)
                 self._publishers[sensor.descriptor.id] = ("joint", sensor.name)
             else:
                 self._publishers[sensor.descriptor.id] = (
@@ -257,9 +259,7 @@ class RedRoverBridge(Node):
         if lateral_mm_s and not caps.holonomic:
             # Dropping the component silently would drive the robot somewhere
             # the planner did not ask for.
-            self.get_logger().warning(
-                "ignoring cmd_vel.linear.y: this chassis cannot strafe"
-            )
+            self.get_logger().warning("ignoring cmd_vel.linear.y: this chassis cannot strafe")
             lateral_mm_s = 0
 
         self._submit(self.rover.drive(linear_mm_s, angular_mrad_s, lateral_mm_s))

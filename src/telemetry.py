@@ -58,11 +58,13 @@ def init_telemetry(
         logger.info("Telemetry disabled by config")
         return
 
-    resource = Resource.create({
-        "service.name": service_name,
-        "service.version": "0.1.0",
-        "deployment.environment": environment,
-    })
+    resource = Resource.create(
+        {
+            "service.name": service_name,
+            "service.version": "0.1.0",
+            "deployment.environment": environment,
+        }
+    )
 
     # --- Traces ---
     _tracer_provider = TracerProvider(resource=resource)
@@ -76,6 +78,7 @@ def init_telemetry(
 
     try:
         from opentelemetry.exporter.prometheus import PrometheusMetricReader
+
         metric_readers.append(PrometheusMetricReader())
         if prometheus_port:
             _start_prometheus_server(prometheus_port)
@@ -88,7 +91,8 @@ def init_telemetry(
     if metric_exporter is not None:
         metric_readers.append(
             PeriodicExportingMetricReader(
-                metric_exporter, export_interval_millis=export_interval_ms,
+                metric_exporter,
+                export_interval_millis=export_interval_ms,
             )
         )
 
@@ -155,7 +159,8 @@ def _start_prometheus_server(port: int) -> None:
     except ImportError:
         logger.warning(
             "prometheus_port=%d requested but prometheus_client is not installed; "
-            "metrics will be collected and never served", port,
+            "metrics will be collected and never served",
+            port,
         )
         return
     try:
@@ -173,6 +178,7 @@ def _create_span_exporter(endpoint: str | None, console_export: bool):
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
                 OTLPSpanExporter,
             )
+
             return OTLPSpanExporter(endpoint=endpoint)
         except Exception as e:
             logger.warning("OTLP span exporter failed: %s", e)
@@ -186,6 +192,7 @@ def _create_metric_exporter(endpoint: str | None, console_export: bool):
             from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
                 OTLPMetricExporter,
             )
+
             return OTLPMetricExporter(endpoint=endpoint)
         except Exception as e:
             logger.warning("OTLP metric exporter failed: %s", e)
@@ -217,6 +224,7 @@ def get_meter(name: str = "redrover") -> metrics.Meter:
 
 def traced(span_name: str | None = None, attributes: dict[str, Any] | None = None):
     """Decorator to wrap async functions in a trace span."""
+
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -231,5 +239,7 @@ def traced(span_name: str | None = None, attributes: dict[str, Any] | None = Non
                     span.set_status(StatusCode.ERROR, str(e))
                     span.record_exception(e)
                     raise
+
         return wrapper
+
     return decorator

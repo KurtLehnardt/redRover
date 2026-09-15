@@ -75,7 +75,7 @@ _FLAGS_DEFAULT = 0x3A  # requests_response | is_activity | has_target | has_sour
 
 # Target IDs
 _TID_NORDIC = 0x01  # power, LEDs, system info
-_TID_ST = 0x02      # drive, motors, IMU, sensors
+_TID_ST = 0x02  # drive, motors, IMU, sensors
 
 # Source ID when talking from a BLE host
 _SID_BLE = 0x01
@@ -92,7 +92,7 @@ _CID_DRIVE_WITH_HEADING = 0x07
 
 _DID_LEDS = 0x1A
 _CID_SET_LEDS_32 = 0x1A  # 32-bit mask — too large for BLE on RVR+
-_CID_SET_LEDS_8 = 0x1C   # 8-bit mask — fits in a single BLE write
+_CID_SET_LEDS_8 = 0x1C  # 8-bit mask — fits in a single BLE write
 
 # Sensor streaming (DID=0x18)
 _DID_SENSOR = 0x18
@@ -123,15 +123,15 @@ _DATA_SIZE_32BIT = 0x02
 # integers spanning the configured data size; each component is mapped back
 # onto its own (min, max) range.
 _SENSOR_COMPONENT_RANGES: dict[int, tuple[tuple[float, float], ...]] = {
-    _SENSOR_ACCELEROMETER: ((-16.0, 16.0),) * 3,       # x, y, z in g
-    _SENSOR_GYROSCOPE: ((-2000.0, 2000.0),) * 3,       # x, y, z in deg/s
-    _SENSOR_LOCATOR: ((-16000.0, 16000.0),) * 2,       # x, y in metres
-    _SENSOR_VELOCITY: ((-5.0, 5.0),) * 2,              # vx, vy in m/s
-    _SENSOR_SPEED: ((0.0, 5.0),),                      # m/s
+    _SENSOR_ACCELEROMETER: ((-16.0, 16.0),) * 3,  # x, y, z in g
+    _SENSOR_GYROSCOPE: ((-2000.0, 2000.0),) * 3,  # x, y, z in deg/s
+    _SENSOR_LOCATOR: ((-16000.0, 16000.0),) * 2,  # x, y in metres
+    _SENSOR_VELOCITY: ((-5.0, 5.0),) * 2,  # vx, vy in m/s
+    _SENSOR_SPEED: ((0.0, 5.0),),  # m/s
     # Pitch and yaw span +/-180, roll only +/-90.  Using one range for all
     # three doubles the reported roll.
     _SENSOR_IMU: ((-180.0, 180.0), (-90.0, 90.0), (-180.0, 180.0)),
-    _SENSOR_ENCODERS: ((0.0, 4294967295.0),) * 2,      # left, right raw ticks
+    _SENSOR_ENCODERS: ((0.0, 4294967295.0),) * 2,  # left, right raw ticks
 }
 
 _SENSOR_NAMES = {
@@ -265,6 +265,7 @@ class RoverState(str, Enum):
 @dataclass
 class Waypoint:
     """A machine station location."""
+
     station_id: str
     x: float  # metres from origin
     y: float
@@ -275,6 +276,7 @@ class Waypoint:
 @dataclass
 class PatrolRoute:
     """Ordered list of waypoints to visit."""
+
     name: str
     waypoints: list[Waypoint] = field(default_factory=list)
 
@@ -303,18 +305,18 @@ class RoverController:
         self._heading = 0.0
         # True when position comes from dead reckoning rather than the locator.
         self._position_estimated = True
-        self._rvr = None          # sphero_sdk handle (uart mode)
-        self._ble_client = None   # bleak BleakClient (ble mode)
-        self._proto = None        # _SpheroV2Protocol (ble mode)
-        self._api_char = None     # cached BLE characteristic object
+        self._rvr = None  # sphero_sdk handle (uart mode)
+        self._ble_client = None  # bleak BleakClient (ble mode)
+        self._proto = None  # _SpheroV2Protocol (ble mode)
+        self._api_char = None  # cached BLE characteristic object
         self._estop = False
 
         # Sensor streaming state
         self._sensor_data = {
-            'locator': (0.0, 0.0),             # x, y in metres
-            'velocity': (0.0, 0.0),            # vx, vy in m/s
-            'accelerometer': (0.0, 0.0, 0.0),  # ax, ay, az in g
-            'gyroscope': (0.0, 0.0, 0.0),      # gx, gy, gz in deg/s
+            "locator": (0.0, 0.0),  # x, y in metres
+            "velocity": (0.0, 0.0),  # vx, vy in m/s
+            "accelerometer": (0.0, 0.0, 0.0),  # ax, ay, az in g
+            "gyroscope": (0.0, 0.0, 0.0),  # gx, gy, gz in deg/s
         }
         self._streaming = False
         # Incremented whenever a sensor's values are actually written, so a
@@ -362,7 +364,7 @@ class RoverController:
         return RoverCapabilities(
             name="sphero-rvr-plus",
             holonomic=False,
-            has_odometry=True,      # the locator, when streaming
+            has_odometry=True,  # the locator, when streaming
             has_leds=True,
             has_battery=True,
             # The RVR+ streams sensors at tens of Hz. That is enough for
@@ -383,7 +385,12 @@ class RoverController:
     # -- BLE helpers --------------------------------------------------------
 
     async def _ble_send(
-        self, did: int, cid: int, target_id: int, data: bytes = b"", timeout: float = 3.0,
+        self,
+        did: int,
+        cid: int,
+        target_id: int,
+        data: bytes = b"",
+        timeout: float = 3.0,
     ) -> bytes:
         """Build a packet, write it to the API V2 characteristic, and await
         the response.  Returns the response data bytes (empty on timeout)."""
@@ -397,13 +404,15 @@ class RoverController:
         try:
             return await asyncio.wait_for(fut, timeout=timeout)
         except TimeoutError:
-            logger.warning(
-                "BLE: response timeout for DID=0x%02X CID=0x%02X seq=%d", did, cid, seq
-            )
+            logger.warning("BLE: response timeout for DID=0x%02X CID=0x%02X seq=%d", did, cid, seq)
             return b""
 
     async def _ble_send_no_response(
-        self, did: int, cid: int, target_id: int, data: bytes = b"",
+        self,
+        did: int,
+        cid: int,
+        target_id: int,
+        data: bytes = b"",
     ):
         """Fire-and-forget packet (no response expected)."""
         pkt = self._proto.build_packet(did, cid, target_id, data)
@@ -434,8 +443,8 @@ class RoverController:
             if eop_idx == -1:
                 break  # Incomplete packet — wait for more data
 
-            pkt = bytes(self._ble_rx_buffer[:eop_idx + 1])
-            del self._ble_rx_buffer[:eop_idx + 1]
+            pkt = bytes(self._ble_rx_buffer[: eop_idx + 1])
+            del self._ble_rx_buffer[: eop_idx + 1]
 
             inner = _SpheroV2Protocol._unescape(pkt[1:-1])
             if len(inner) < 7:
@@ -461,9 +470,7 @@ class RoverController:
 
         slot_sensors = self._streaming_slots.get(token, [])
         if not slot_sensors:
-            logger.debug(
-                "Streaming data for unknown token %d (%d bytes)", token, len(sensor_bytes)
-            )
+            logger.debug("Streaming data for unknown token %d (%d bytes)", token, len(sensor_bytes))
             return
 
         offset = 0
@@ -481,7 +488,9 @@ class RoverController:
                     logger.debug("Streaming data truncated for sensor 0x%04X", sensor_id)
                     return
                 raw_uint = int.from_bytes(
-                    sensor_bytes[offset:offset + bytes_per_component], 'big', signed=False,
+                    sensor_bytes[offset : offset + bytes_per_component],
+                    "big",
+                    signed=False,
                 )
                 offset += bytes_per_component
                 normalized = raw_uint / max_int
@@ -494,7 +503,7 @@ class RoverController:
 
         # The locator is a measured position, so trust it over dead reckoning.
         if _SENSOR_LOCATOR in slot_sensors:
-            self._position = self._sensor_data['locator']
+            self._position = self._sensor_data["locator"]
             self._position_estimated = False
 
         self._dispatch_callbacks()
@@ -554,7 +563,8 @@ class RoverController:
 
             logger.info(
                 "BLE: scanning for RVR+ devices (attempt %d, %.0fs remaining) ...",
-                attempt, remaining,
+                attempt,
+                remaining,
             )
             devices = await BleakScanner.discover(timeout=min(10.0, remaining))
             for d in devices:
@@ -585,16 +595,16 @@ class RoverController:
             for char in service.characteristics:
                 if char.uuid == _API_V2_CHARACTERISTIC:
                     self._api_char = char
-                    logger.info(
-                        "BLE: cached API V2 characteristic (handle %s)", char.handle
-                    )
+                    logger.info("BLE: cached API V2 characteristic (handle %s)", char.handle)
                     break
 
         # Anti-DOS handshake — try the standard UUID, then the RVR+ alternate
         for antidos_uuid in (_ANTIDOS_CHARACTERISTIC, _ANTIDOS_CHARACTERISTIC_ALT):
             try:
                 await self._ble_client.write_gatt_char(
-                    antidos_uuid, _ANTIDOS_PAYLOAD, response=True,
+                    antidos_uuid,
+                    _ANTIDOS_PAYLOAD,
+                    response=True,
                 )
                 logger.info("BLE: Anti-DOS handshake completed on %s", antidos_uuid[-8:])
                 break
@@ -603,7 +613,8 @@ class RoverController:
 
         self._proto = _SpheroV2Protocol()
         await self._ble_client.start_notify(
-            self._api_char or _API_V2_CHARACTERISTIC, self._ble_notification_handler,
+            self._api_char or _API_V2_CHARACTERISTIC,
+            self._ble_notification_handler,
         )
         logger.info("BLE: notifications enabled on API V2 characteristic")
 
@@ -616,6 +627,7 @@ class RoverController:
         """Legacy UART connection via sphero_sdk (Raspberry Pi)."""
         try:
             from sphero_sdk import SerialAsyncDal, SpheroRvrAsync
+
             self._rvr = SpheroRvrAsync(dal=SerialAsyncDal(port="/dev/ttyTHS1"))
             await self._rvr.wake()
             await asyncio.sleep(2)
@@ -636,9 +648,7 @@ class RoverController:
         if self._ble_client and self._ble_client.is_connected:
             try:
                 await self.stop()
-                await self._ble_client.stop_notify(
-                    self._api_char or _API_V2_CHARACTERISTIC
-                )
+                await self._ble_client.stop_notify(self._api_char or _API_V2_CHARACTERISTIC)
             except Exception as e:
                 logger.debug("BLE: cleanup warning: %s", e)
             if self._proto is not None:
@@ -693,7 +703,10 @@ class RoverController:
         self.state = RoverState.NAVIGATING
         logger.info(
             "Navigating to station %s (%s) at (%.1f, %.1f)",
-            waypoint.station_id, waypoint.name, waypoint.x, waypoint.y,
+            waypoint.station_id,
+            waypoint.name,
+            waypoint.x,
+            waypoint.y,
         )
 
         dx = waypoint.x - self._position[0]
@@ -727,15 +740,22 @@ class RoverController:
         self.state = RoverState.DWELLING
 
     def _settle_position(
-        self, waypoint: Waypoint, distance: float, heading_int: int, travel_time: float,
+        self,
+        waypoint: Waypoint,
+        distance: float,
+        heading_int: int,
+        travel_time: float,
     ) -> None:
         """Record where we most likely ended up after a drive leg."""
         self._heading = float(heading_int)
         if self._streaming and not self._position_estimated:
             logger.info(
                 "Arrived near %s — locator reads (%.2f, %.2f), target (%.2f, %.2f)",
-                waypoint.station_id, self._position[0], self._position[1],
-                waypoint.x, waypoint.y,
+                waypoint.station_id,
+                self._position[0],
+                self._position[1],
+                waypoint.x,
+                waypoint.y,
             )
             return
 
@@ -750,8 +770,11 @@ class RoverController:
         logger.info(
             "Arrived near %s — dead-reckoned (%.2f, %.2f), target (%.2f, %.2f). "
             "Enable sensor streaming for a measured position.",
-            waypoint.station_id, self._position[0], self._position[1],
-            waypoint.x, waypoint.y,
+            waypoint.station_id,
+            self._position[0],
+            self._position[1],
+            waypoint.x,
+            waypoint.y,
         )
 
     async def _sim_sleep(self, seconds: float) -> None:
@@ -793,26 +816,40 @@ class RoverController:
         await self.stop_sensor_streaming()
 
         token_0 = 0
-        slot1_data = bytes([
-            token_0,
-            (_SENSOR_ACCELEROMETER >> 8) & 0xFF, _SENSOR_ACCELEROMETER & 0xFF, _DATA_SIZE_32BIT,
-            (_SENSOR_GYROSCOPE >> 8) & 0xFF, _SENSOR_GYROSCOPE & 0xFF, _DATA_SIZE_32BIT,
-        ])
+        slot1_data = bytes(
+            [
+                token_0,
+                (_SENSOR_ACCELEROMETER >> 8) & 0xFF,
+                _SENSOR_ACCELEROMETER & 0xFF,
+                _DATA_SIZE_32BIT,
+                (_SENSOR_GYROSCOPE >> 8) & 0xFF,
+                _SENSOR_GYROSCOPE & 0xFF,
+                _DATA_SIZE_32BIT,
+            ]
+        )
         await self._ble_send(_DID_SENSOR, _CID_CONFIGURE_STREAMING, _TID_ST, data=slot1_data)
         self._streaming_slots[token_0] = [_SENSOR_ACCELEROMETER, _SENSOR_GYROSCOPE]
 
         token_1 = 1
-        slot2_data = bytes([
-            token_1,
-            (_SENSOR_LOCATOR >> 8) & 0xFF, _SENSOR_LOCATOR & 0xFF, _DATA_SIZE_32BIT,
-            (_SENSOR_VELOCITY >> 8) & 0xFF, _SENSOR_VELOCITY & 0xFF, _DATA_SIZE_32BIT,
-        ])
+        slot2_data = bytes(
+            [
+                token_1,
+                (_SENSOR_LOCATOR >> 8) & 0xFF,
+                _SENSOR_LOCATOR & 0xFF,
+                _DATA_SIZE_32BIT,
+                (_SENSOR_VELOCITY >> 8) & 0xFF,
+                _SENSOR_VELOCITY & 0xFF,
+                _DATA_SIZE_32BIT,
+            ]
+        )
         await self._ble_send(_DID_SENSOR, _CID_CONFIGURE_STREAMING, _TID_ST, data=slot2_data)
         self._streaming_slots[token_1] = [_SENSOR_LOCATOR, _SENSOR_VELOCITY]
 
         period_ms = max(1, min(65535, int(period_ms)))
         await self._ble_send(
-            _DID_SENSOR, _CID_START_STREAMING, _TID_ST,
+            _DID_SENSOR,
+            _CID_START_STREAMING,
+            _TID_ST,
             data=bytes([(period_ms >> 8) & 0xFF, period_ms & 0xFF]),
         )
         self._streaming = True
@@ -842,7 +879,7 @@ class RoverController:
     async def reset_locator(self):
         """Reset the locator X and Y coordinates to zero."""
         logger.info("Resetting locator origin")
-        self._sensor_data['locator'] = (0.0, 0.0)
+        self._sensor_data["locator"] = (0.0, 0.0)
         self._position = (0.0, 0.0)
         if self.simulate:
             self._position_estimated = True
@@ -888,8 +925,8 @@ class RoverController:
             if key in self._sensor_data:
                 self._sensor_data[key] = value
                 self._sensor_updates[key] = self._sensor_updates.get(key, 0) + 1
-        if 'locator' in values:
-            self._position = tuple(values['locator'])
+        if "locator" in values:
+            self._position = tuple(values["locator"])
         self._dispatch_callbacks()
 
     # -- LED control --------------------------------------------------------
@@ -909,12 +946,17 @@ class RoverController:
             #   bits 6-7: left status indicator R,G
             # One value byte per set bit; two writes cover all channels.
             await self._ble_send_no_response(
-                _DID_LEDS, _CID_SET_LEDS_8, _TID_NORDIC,
+                _DID_LEDS,
+                _CID_SET_LEDS_8,
+                _TID_NORDIC,
                 data=bytes([0x3F, r, g, b, r, g, b]),
             )
             await asyncio.sleep(0.075)
             await self._ble_send_no_response(
-                _DID_LEDS, _CID_SET_LEDS_8, _TID_NORDIC, data=bytes([0xC0, r, g]),
+                _DID_LEDS,
+                _CID_SET_LEDS_8,
+                _TID_NORDIC,
+                data=bytes([0xC0, r, g]),
             )
             await asyncio.sleep(0.075)
         elif self._rvr:
@@ -953,7 +995,11 @@ class RoverController:
             await self._rvr.reset_yaw()
 
     async def set_raw_motors(
-        self, left_mode: int, left_speed: int, right_mode: int, right_speed: int,
+        self,
+        left_mode: int,
+        left_speed: int,
+        right_mode: int,
+        right_speed: int,
     ):
         """Set raw motor speeds.  Modes: 0=off, 1=forward, 2=reverse."""
         if self._estop:
@@ -965,16 +1011,24 @@ class RoverController:
             return
         if self._ble_client:
             await self._ble_send(
-                _DID_DRIVE, _CID_RAW_MOTORS, _TID_ST,
-                data=bytes([
-                    left_mode & 0xFF, left_speed & 0xFF,
-                    right_mode & 0xFF, right_speed & 0xFF,
-                ]),
+                _DID_DRIVE,
+                _CID_RAW_MOTORS,
+                _TID_ST,
+                data=bytes(
+                    [
+                        left_mode & 0xFF,
+                        left_speed & 0xFF,
+                        right_mode & 0xFF,
+                        right_speed & 0xFF,
+                    ]
+                ),
             )
         elif self._rvr:
             await self._rvr.raw_motors(
-                left_mode=left_mode, left_speed=left_speed,
-                right_mode=right_mode, right_speed=right_speed,
+                left_mode=left_mode,
+                left_speed=left_speed,
+                right_mode=right_mode,
+                right_speed=right_speed,
             )
 
     async def drive_with_heading(self, speed: int, heading: int):
@@ -988,7 +1042,9 @@ class RoverController:
             return
         if self._ble_client:
             await self._ble_send(
-                _DID_DRIVE, _CID_DRIVE_WITH_HEADING, _TID_ST,
+                _DID_DRIVE,
+                _CID_DRIVE_WITH_HEADING,
+                _TID_ST,
                 data=bytes([speed, (heading >> 8) & 0xFF, heading & 0xFF, 0]),
             )
         elif self._rvr:
@@ -1009,7 +1065,9 @@ class RoverController:
         async def _issue_stop():
             if self._ble_client:
                 await self._ble_send_no_response(
-                    _DID_DRIVE, _CID_DRIVE_WITH_HEADING, _TID_ST,
+                    _DID_DRIVE,
+                    _CID_DRIVE_WITH_HEADING,
+                    _TID_ST,
                     data=bytes([0, (heading_int >> 8) & 0xFF, heading_int & 0xFF, 0]),
                 )
             elif self._rvr:

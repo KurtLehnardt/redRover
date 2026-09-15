@@ -34,7 +34,7 @@ def test_real_suite_never_falls_back_to_the_simulator(config):
     A modality with no driver must surface as unavailable, not as synthetic
     data indistinguishable from a measurement.
     """
-    config.sensors.sensor_type = "usb_accel"   # no driver implemented
+    config.sensors.sensor_type = "usb_accel"  # no driver implemented
     config.sensors.microphone_enabled = False
     config.sensors.thermal_camera = "none"
 
@@ -71,9 +71,11 @@ def test_low_rate_sample_reports_bands_as_unmeasured():
     import numpy as np
 
     sample = VibrationSample(
-        station_id="M-1", timestamp=0.0,
+        station_id="M-1",
+        timestamp=0.0,
         raw_signal=np.random.randn(250).astype(np.float32),
-        sample_rate=50, duration=5.0,
+        sample_rate=50,
+        duration=5.0,
     )
     features = extract_features(sample)
 
@@ -91,8 +93,7 @@ def test_high_rate_sample_reports_every_band():
     from src.sensors.simulator import generate_sample
 
     features = extract_features(generate_sample(sample_rate=4000, duration=1.0))
-    for band in ("energy_0_100hz", "energy_100_500hz",
-                 "energy_500_1000hz", "energy_1000_2000hz"):
+    for band in ("energy_0_100hz", "energy_100_500hz", "energy_500_1000hz", "energy_1000_2000hz"):
         assert features[band] is not None
     assert features["partial_bands"] == []
     assert features["bearing_analysis_available"] is True
@@ -173,9 +174,7 @@ async def test_imu_source_reports_delivered_rate_not_poll_rate():
     assert len(sample.raw_signal) <= delivered
     assert len(sample.raw_signal) >= 8
     # And the reported rate matches what arrived.
-    assert sample.sample_rate == pytest.approx(
-        len(sample.raw_signal) / sample.duration, rel=0.25
-    )
+    assert sample.sample_rate == pytest.approx(len(sample.raw_signal) / sample.duration, rel=0.25)
     # Duplicates would show up as repeated values; these are all distinct.
     assert len(set(sample.raw_signal.tolist())) == len(sample.raw_signal)
 

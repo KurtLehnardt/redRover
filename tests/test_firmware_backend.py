@@ -28,8 +28,9 @@ class FakeBoard:
     while latched.
     """
 
-    def __init__(self, sensors: list[wire.SensorDescriptor] | None = None,
-                 board: str = "fake-rover"):
+    def __init__(
+        self, sensors: list[wire.SensorDescriptor] | None = None, board: str = "fake-rover"
+    ):
         self.board = board
         self.sensors = sensors or []
         self.reader = wire.FrameReader()
@@ -127,9 +128,14 @@ def encode_descriptor(d: wire.SensorDescriptor) -> bytes:
 
 def accel_descriptor(rate_hz: int = 1000, sensor_id: int = 0) -> wire.SensorDescriptor:
     return wire.SensorDescriptor(
-        id=sensor_id, kind=wire.SensorKind.ACCELERATION,
-        unit=wire.Unit.METRE_PER_SECOND2, channels=3, scale_exp=-3,
-        rate_hz=rate_hz, failed=False, name="vibration",
+        id=sensor_id,
+        kind=wire.SensorKind.ACCELERATION,
+        unit=wire.Unit.METRE_PER_SECOND2,
+        channels=3,
+        scale_exp=-3,
+        rate_hz=rate_hz,
+        failed=False,
+        name="vibration",
     )
 
 
@@ -294,8 +300,14 @@ async def test_simulated_drive_marks_the_position_estimated():
 async def test_odometry_sample_overrides_dead_reckoning(rover_and_board):
     rover, board = rover_and_board
     odometry = wire.SensorDescriptor(
-        id=1, kind=wire.SensorKind.ODOMETRY, unit=wire.Unit.METRE, channels=3,
-        scale_exp=-3, rate_hz=20, failed=False, name="odom",
+        id=1,
+        kind=wire.SensorKind.ODOMETRY,
+        unit=wire.Unit.METRE,
+        channels=3,
+        scale_exp=-3,
+        rate_hz=20,
+        failed=False,
+        name="odom",
     )
     board.sensors.append(odometry)
     await rover._handshake()
@@ -419,8 +431,14 @@ async def test_repeated_heading_commands_keep_driving(rover_and_board):
 async def test_measured_heading_stops_the_open_loop_integrator(rover_and_board):
     rover, board = rover_and_board
     odometry = wire.SensorDescriptor(
-        id=1, kind=wire.SensorKind.ODOMETRY, unit=wire.Unit.METRE, channels=3,
-        scale_exp=0, rate_hz=20, failed=False, name="odom",
+        id=1,
+        kind=wire.SensorKind.ODOMETRY,
+        unit=wire.Unit.METRE,
+        channels=3,
+        scale_exp=0,
+        rate_hz=20,
+        failed=False,
+        name="odom",
     )
     board.sensors.append(odometry)
     await rover._handshake()
@@ -449,8 +467,9 @@ def test_clear_estop_warns_when_it_cannot_reach_the_board(caplog):
     rover._estop = True
     with caplog.at_level(logging.WARNING):
         rover.clear_estop()
-    assert any("still" in record.message and "latched" in record.message
-               for record in caplog.records)
+    assert any(
+        "still" in record.message and "latched" in record.message for record in caplog.records
+    )
 
 
 # === The backend split must reach every call site ===
@@ -487,8 +506,13 @@ async def test_explorer_runs_against_a_firmware_rover(tmp_path):
     await rover.connect()
     grid = OccupancyGrid(width_m=4.0, height_m=4.0, cell_cm=10)
     explorer = RoomExplorer(
-        rover=rover, grid=grid, speed=60, duration=0.4,
-        room_bounds_m=2.0, simulate=True, seed=1,
+        rover=rover,
+        grid=grid,
+        speed=60,
+        duration=0.4,
+        room_bounds_m=2.0,
+        simulate=True,
+        seed=1,
     )
     await explorer.run()
 

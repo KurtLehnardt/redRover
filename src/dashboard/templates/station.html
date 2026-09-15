@@ -64,6 +64,7 @@
                     <th>RMS</th>
                     <th>Peak</th>
                     <th>Kurtosis</th>
+                    <th>Rate</th>
                     <th>Diagnosis</th>
                     <th>Severity</th>
                     <th>Confidence</th>
@@ -73,9 +74,20 @@
                 {% for h in history %}
                 <tr>
                     <td>{{ h.measured_at }}</td>
-                    <td>{{ "%.4f"|format(h.rms) }}</td>
-                    <td>{{ "%.4f"|format(h.peak) }}</td>
-                    <td>{{ "%.2f"|format(h.kurtosis) }}</td>
+                    {# A measurement whose column was never written renders as
+                       a dash. Formatting NULL raised TypeError and took the
+                       whole page down with a 500. #}
+                    <td>{{ "%.4f"|format(h.rms) if h.rms is not none else "—" }}</td>
+                    <td>{{ "%.4f"|format(h.peak) if h.peak is not none else "—" }}</td>
+                    <td>{{ "%.2f"|format(h.kurtosis) if h.kurtosis is not none else "—" }}</td>
+                    <td>
+                        {% if h.sample_rate_hz %}
+                            {{ "%.0f"|format(h.sample_rate_hz) }} Hz
+                            {% if not h.bearing_analysis_available %}
+                            <span class="badge badge-warning" title="Below the 2 kHz needed for bearing analysis">low</span>
+                            {% endif %}
+                        {% else %}—{% endif %}
+                    </td>
                     <td>{{ h.fault_type or "—" }}</td>
                     <td>
                         {% if h.severity == 'severe' %}
@@ -86,7 +98,7 @@
                         <span class="badge badge-normal">{{ h.severity }}</span>
                         {% endif %}
                     </td>
-                    <td>{{ "%.0f"|format(h.confidence * 100) if h.confidence else "—" }}%</td>
+                    <td>{% if h.confidence %}{{ "%.0f"|format(h.confidence * 100) }}%{% else %}—{% endif %}</td>
                 </tr>
                 {% endfor %}
             </tbody>

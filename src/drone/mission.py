@@ -15,18 +15,20 @@ logger = logging.getLogger(__name__)
 
 class MissionType(str, Enum):
     """Types of aerial inspection missions."""
-    OVERHEAD_PIPE = "overhead_pipe"       # Inspect overhead pipes/conduits
-    ELEVATED_GAUGE = "elevated_gauge"     # Read gauges mounted high
-    HVAC_DUCT = "hvac_duct"             # Check HVAC ductwork
-    CEILING_CHECK = "ceiling_check"      # Roof leaks, structural
-    CABLE_TRAY = "cable_tray"           # Overhead cable tray inspection
-    WIDE_AREA_SCAN = "wide_area_scan"   # General overhead survey
-    STACK_TOP = "stack_top"             # Top of storage racks/shelves
+
+    OVERHEAD_PIPE = "overhead_pipe"  # Inspect overhead pipes/conduits
+    ELEVATED_GAUGE = "elevated_gauge"  # Read gauges mounted high
+    HVAC_DUCT = "hvac_duct"  # Check HVAC ductwork
+    CEILING_CHECK = "ceiling_check"  # Roof leaks, structural
+    CABLE_TRAY = "cable_tray"  # Overhead cable tray inspection
+    WIDE_AREA_SCAN = "wide_area_scan"  # General overhead survey
+    STACK_TOP = "stack_top"  # Top of storage racks/shelves
 
 
 @dataclass
 class DroneMission:
     """A complete drone mission with ordered inspection targets."""
+
     mission_id: str
     mission_type: MissionType
     station_id: str  # Which ground station triggered this
@@ -53,15 +55,15 @@ class DroneMission:
             flight_time += t.hover_duration
             prev_pos = (t.x, t.y, t.z)
         # Add return trip
-        flight_time += (prev_pos[0]**2 + prev_pos[1]**2 + prev_pos[2]**2) ** 0.5
+        flight_time += (prev_pos[0] ** 2 + prev_pos[1] ** 2 + prev_pos[2] ** 2) ** 0.5
         return flight_time + 10.0  # +10s for takeoff/landing
 
 
 def generate_overhead_pipe_mission(
     station_id: str,
     pipe_direction: str = "x",  # "x" or "y" — pipe runs along this axis
-    pipe_length: float = 3.0,   # meters
-    pipe_height: float = 2.5,   # meters above ground
+    pipe_length: float = 3.0,  # meters
+    pipe_height: float = 2.5,  # meters above ground
     reason: str = "Acoustic leak detected below overhead pipe",
 ) -> DroneMission:
     """Generate a mission to inspect overhead pipes/conduits.
@@ -80,13 +82,17 @@ def generate_overhead_pipe_mission(
         else:
             x, y = 0.0, offset
 
-        targets.append(InspectionTarget(
-            target_id=f"{station_id}_pipe_{i:02d}",
-            name=f"Pipe section {i+1}/{n_points}",
-            x=x, y=y, z=pipe_height,
-            hover_duration=3.0,
-            capture_angles=[0.0, 90.0],  # Front and side views
-        ))
+        targets.append(
+            InspectionTarget(
+                target_id=f"{station_id}_pipe_{i:02d}",
+                name=f"Pipe section {i + 1}/{n_points}",
+                x=x,
+                y=y,
+                z=pipe_height,
+                hover_duration=3.0,
+                capture_angles=[0.0, 90.0],  # Front and side views
+            )
+        )
 
     return DroneMission(
         mission_id=f"pipe_{station_id}_{int(pipe_length)}m",
@@ -114,7 +120,9 @@ def generate_elevated_gauge_mission(
         InspectionTarget(
             target_id=f"{station_id}_gauge_approach",
             name="Gauge approach",
-            x=gauge_x, y=gauge_y - 0.8, z=gauge_height,
+            x=gauge_x,
+            y=gauge_y - 0.8,
+            z=gauge_height,
             hover_duration=2.0,
             capture_angles=[0.0],
         ),
@@ -122,7 +130,9 @@ def generate_elevated_gauge_mission(
         InspectionTarget(
             target_id=f"{station_id}_gauge_closeup",
             name="Gauge close-up reading",
-            x=gauge_x, y=gauge_y - 0.4, z=gauge_height,
+            x=gauge_x,
+            y=gauge_y - 0.4,
+            z=gauge_height,
             hover_duration=5.0,
             capture_angles=[0.0],  # Head-on for best OCR
         ),
@@ -155,13 +165,17 @@ def generate_hvac_duct_mission(
         x = scan_radius * math.cos(angle)
         y = scan_radius * math.sin(angle)
 
-        targets.append(InspectionTarget(
-            target_id=f"{station_id}_hvac_{i:02d}",
-            name=f"HVAC section {i+1}/{n_points}",
-            x=x, y=y, z=duct_height - 0.3,
-            hover_duration=3.0,
-            capture_angles=[0.0],  # Looking up at duct
-        ))
+        targets.append(
+            InspectionTarget(
+                target_id=f"{station_id}_hvac_{i:02d}",
+                name=f"HVAC section {i + 1}/{n_points}",
+                x=x,
+                y=y,
+                z=duct_height - 0.3,
+                hover_duration=3.0,
+                capture_angles=[0.0],  # Looking up at duct
+            )
+        )
 
     return DroneMission(
         mission_id=f"hvac_{station_id}",
@@ -192,13 +206,17 @@ def generate_wide_area_scan(
 
         for col in col_range:
             x = -width / 2 + col * (width / (cols - 1))
-            targets.append(InspectionTarget(
-                target_id=f"{station_id}_scan_{row:02d}_{col:02d}",
-                name=f"Grid ({row},{col})",
-                x=x, y=y, z=altitude,
-                hover_duration=2.0,
-                capture_angles=[0.0],
-            ))
+            targets.append(
+                InspectionTarget(
+                    target_id=f"{station_id}_scan_{row:02d}_{col:02d}",
+                    name=f"Grid ({row},{col})",
+                    x=x,
+                    y=y,
+                    z=altitude,
+                    hover_duration=2.0,
+                    capture_angles=[0.0],
+                )
+            )
 
     return DroneMission(
         mission_id=f"scan_{station_id}",

@@ -38,7 +38,7 @@ def render_marker_frame(
     cx, cy = centre
     half = size_px // 2
     y0, x0 = cy - half, cx - half
-    frame[y0:y0 + size_px, x0:x0 + size_px] = marker
+    frame[y0 : y0 + size_px, x0 : x0 + size_px] = marker
     return cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
 
 
@@ -54,14 +54,10 @@ def test_detects_a_centred_marker():
 
 
 def test_offset_marker_reports_the_direction_of_the_offset():
-    right = PrecisionLandingSystem().detect_marker(
-        render_marker_frame(centre=(480, 240))
-    )
+    right = PrecisionLandingSystem().detect_marker(render_marker_frame(centre=(480, 240)))
     assert right is not None and right.center_x > 0.3
 
-    down = PrecisionLandingSystem().detect_marker(
-        render_marker_frame(centre=(320, 380))
-    )
+    down = PrecisionLandingSystem().detect_marker(render_marker_frame(centre=(320, 380)))
     assert down is not None and down.center_y > 0.3
 
 
@@ -163,8 +159,7 @@ async def test_landing_steers_toward_an_offset_marker():
 
 @pytest.mark.asyncio
 async def test_controller_exposes_the_surface_the_landing_loop_needs(tmp_path):
-    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path,
-                            time_scale=0.0)
+    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path, time_scale=0.0)
     await drone.connect()
     # These are what execute_landing calls; they must exist and be safe to
     # call without a Tello attached.
@@ -177,8 +172,7 @@ def test_landing_mode_is_configurable():
     default = DroneController(drone_type=DroneType.SIMULATED)
     assert default.landing_mode == "mission_pad"
 
-    marker = DroneController(drone_type=DroneType.SIMULATED,
-                             landing_mode="aruco", marker_id=17)
+    marker = DroneController(drone_type=DroneType.SIMULATED, landing_mode="aruco", marker_id=17)
     assert marker.landing_mode == "aruco"
     assert marker.marker_id == 17
 
@@ -205,12 +199,8 @@ def test_pid_reset_clears_history():
 def test_landing_completion_needs_close_and_centred():
     system = PrecisionLandingSystem()
     # Close but badly off-centre is not a landing.
-    system.compute_landing_commands(
-        MarkerDetection(MARKER_ID, 0.5, 0.0, 20.0, 0.0, 0.0)
-    )
+    system.compute_landing_commands(MarkerDetection(MARKER_ID, 0.5, 0.0, 20.0, 0.0, 0.0))
     assert not system.landing_complete
 
-    system.compute_landing_commands(
-        MarkerDetection(MARKER_ID, 0.01, 0.01, 20.0, 0.0, 0.0)
-    )
+    system.compute_landing_commands(MarkerDetection(MARKER_ID, 0.01, 0.01, 20.0, 0.0, 0.0))
     assert system.landing_complete

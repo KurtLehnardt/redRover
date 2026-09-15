@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DiagnosisResult:
     """Result of AI vibration analysis."""
+
     station_id: str
     fault_type: FaultType
     confidence: float
@@ -106,18 +107,18 @@ class VibrationAnalyzer:
         return f"""Analyze the following vibration data from machine station {station_id}:
 
 Signal Statistics:
-- Sample rate: {features.get('sample_rate_hz', 0):.0f} Hz
-- Bearing analysis available: {features.get('bearing_analysis_available')}
-- RMS amplitude: {fmt('rms')}
-- Peak amplitude: {fmt('peak')}
-- Crest factor: {fmt('crest_factor', 2)}
-- Kurtosis: {fmt('kurtosis', 2)}
-- Dominant frequency: {fmt('dominant_frequency_hz', 1)} Hz
+- Sample rate: {features.get("sample_rate_hz", 0):.0f} Hz
+- Bearing analysis available: {features.get("bearing_analysis_available")}
+- RMS amplitude: {fmt("rms")}
+- Peak amplitude: {fmt("peak")}
+- Crest factor: {fmt("crest_factor", 2)}
+- Kurtosis: {fmt("kurtosis", 2)}
+- Dominant frequency: {fmt("dominant_frequency_hz", 1)} Hz
 
 Frequency Band Energy (NOT MEASURED means above the sensor Nyquist limit):
-- 0-100 Hz: {fmt('energy_0_100hz', 6)}
-- 100-500 Hz: {fmt('energy_100_500hz', 6)}
-- 500-1000 Hz: {fmt('energy_500_1000hz', 6)}
-- 1000-2000 Hz: {fmt('energy_1000_2000hz', 6)}
+- 0-100 Hz: {fmt("energy_0_100hz", 6)}
+- 100-500 Hz: {fmt("energy_100_500hz", 6)}
+- 500-1000 Hz: {fmt("energy_500_1000hz", 6)}
+- 1000-2000 Hz: {fmt("energy_1000_2000hz", 6)}
 
 Diagnose this machine's condition."""

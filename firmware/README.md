@@ -36,7 +36,7 @@ pip install platformio
 
 pio run -d firmware                      # build for every board
 pio run -d firmware -e uno -t upload     # flash an Uno
-pio test -d firmware -e native           # 45 host-side unit tests, no board
+pio test -d firmware -e native           # 55 host-side unit tests, no board
 
 pio device monitor -b 115200             # watch the link
 ```
@@ -114,6 +114,16 @@ sensors.add(&objectTemp);   // the entire integration step
 ```
 
 `examples/AddASensor` is this, complete and buildable.
+
+If your driver keeps state that an ISR also writes -- an encoder count, a
+capture buffer -- read it inside a `CriticalSection`:
+
+```cpp
+int32_t count() const {
+    redrover::CriticalSection guard(hal_);   // 32-bit reads are not atomic on AVR
+    return count_;
+}
+```
 
 Three rules the interface enforces, because they are the ones that cause silent
 wrong answers:
@@ -243,7 +253,7 @@ firmware/
 │   │   └── testing/            FakeHal, LoopbackTransport
 │   └── *.cpp
 ├── examples/                   Arduino IDE sketches
-├── test/                       45 native unit tests
+├── test/                       55 native unit tests
 └── tools/gen_vectors.cpp       golden frames for the Python mirror
 ```
 
@@ -253,8 +263,9 @@ firmware/
 pio test -d firmware -e native
 ```
 
-45 tests covering COBS and CRC round trips and corruption, frame encode/decode,
+55 tests covering COBS and CRC round trips and corruption, frame encode/decode,
 registry scheduling (including the 49-day `millis()` rollover), differential and
 mecanum kinematics, saturation scaling, the command watchdog, the e-stop latch,
-and stream resynchronisation after a truncated frame. All on the host, with no
-board attached.
+stream resynchronisation after a truncated frame, sensor unit conversions, and
+the interrupt guard on the encoder count. All on the host, with no board
+attached.

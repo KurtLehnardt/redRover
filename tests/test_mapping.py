@@ -86,8 +86,13 @@ async def test_simulated_exploration_builds_a_map():
     rover = RoverController(simulate=True)
     await rover.connect()
     explorer = RoomExplorer(
-        rover=rover, grid=grid, speed=60, duration=2.0,
-        room_bounds_m=3.0, simulate=True, seed=1,
+        rover=rover,
+        grid=grid,
+        speed=60,
+        duration=2.0,
+        room_bounds_m=3.0,
+        simulate=True,
+        seed=1,
     )
     await explorer.run()
 
@@ -102,11 +107,17 @@ async def test_request_stop_ends_the_loop():
     rover = RoverController(simulate=True)
     await rover.connect()
     explorer = RoomExplorer(
-        rover=rover, grid=grid, speed=60, duration=30.0,
-        room_bounds_m=3.0, simulate=True, seed=1,
+        rover=rover,
+        grid=grid,
+        speed=60,
+        duration=30.0,
+        room_bounds_m=3.0,
+        simulate=True,
+        seed=1,
     )
 
     import asyncio
+
     task = asyncio.create_task(explorer.run())
     await asyncio.sleep(0.3)
     explorer.request_stop()

@@ -165,18 +165,21 @@ async def run_patrol(
 
     patrol_duration_hist = meter.create_histogram(
         "redrover.patrol.duration_seconds",
-        description="Duration of a full patrol cycle", unit="s",
+        description="Duration of a full patrol cycle",
+        unit="s",
     )
     station_measurement_hist = meter.create_histogram(
         "redrover.station.measurement_seconds",
-        description="Time to measure a single station", unit="s",
+        description="Time to measure a single station",
+        unit="s",
     )
     faults_detected_counter = meter.create_counter(
         "redrover.patrol.faults_detected",
         description="Total faults detected across patrols",
     )
     sensor_failure_counter = meter.create_counter(
-        "redrover.sensor.failures", description="Sensor read failures by type",
+        "redrover.sensor.failures",
+        description="Sensor read failures by type",
     )
 
     # The backend is chosen by [rover].connection, so a Sphero RVR+, a
@@ -196,26 +199,35 @@ async def run_patrol(
     alert_mgr = get_alert_manager(config)
 
     suite: SensorSuite = build_sensor_suite(
-        config, simulate=simulate, rover=rover, scenarios=scenarios,
+        config,
+        simulate=simulate,
+        rover=rover,
+        scenarios=scenarios,
     )
 
     results: list[FusedDiagnosis] = []
     failures = {"vibration": 0, "acoustic": 0, "thermal": 0}
     total_stations = len(route.waypoints)
     patrol_start = time.time()
-    patrol_span = tracer.start_span("patrol", attributes={
-        "patrol.route": route.name,
-        "patrol.station_count": total_stations,
-        "patrol.simulate": simulate,
-        "patrol.skip_ai": skip_ai,
-    })
+    patrol_span = tracer.start_span(
+        "patrol",
+        attributes={
+            "patrol.route": route.name,
+            "patrol.station_count": total_stations,
+            "patrol.simulate": simulate,
+            "patrol.skip_ai": skip_ai,
+        },
+    )
 
     logger.info("=" * 70)
     logger.info("redRover Multi-Modal Patrol — %s", datetime.now(UTC).isoformat())
     logger.info("Route: %s (%d stations)", route.name, total_stations)
     logger.info("Mode: %s", "SIMULATED" if simulate else "LIVE HARDWARE")
-    logger.info("Rover: %s (%s)", config.rover.connection, rover.capabilities.name
-                if hasattr(rover, "capabilities") else "rvr+")
+    logger.info(
+        "Rover: %s (%s)",
+        config.rover.connection,
+        rover.capabilities.name if hasattr(rover, "capabilities") else "rvr+",
+    )
     logger.info("Sensors: %s", suite.describe())
     logger.info("=" * 70)
 
@@ -230,7 +242,9 @@ async def run_patrol(
         await rover.connect()
         if enable_drone:
             await drone.connect()
-            logger.info("Drone: %s (battery: %s%%)", drone.drone_type.value, await drone.get_battery())
+            logger.info(
+                "Drone: %s (battery: %s%%)", drone.drone_type.value, await drone.get_battery()
+            )
 
         patrol_id = await db.start_patrol(route.name, datetime.now(UTC).isoformat())
 
@@ -244,18 +258,27 @@ async def run_patrol(
             await rover.drive_to(waypoint)
 
             # === VIBRATION ===
-            logger.info("  [vibration] measuring (%ds) via %s ...",
-                        config.sensors.measurement_duration, suite.vibration.name)
+            logger.info(
+                "  [vibration] measuring (%ds) via %s ...",
+                config.sensors.measurement_duration,
+                suite.vibration.name,
+            )
             vib_sample = await _read_modality(
-                suite.vibration, waypoint.station_id, "vibration",
-                failures, sensor_failure_counter,
+                suite.vibration,
+                waypoint.station_id,
+                "vibration",
+                failures,
+                sensor_failure_counter,
             )
             vib_features = extract_features(vib_sample) if vib_sample else None
             if vib_features:
                 logger.info(
                     "  [vibration] RMS=%.3f Peak=%.3f Kurtosis=%.1f Crest=%.1f @%.0fHz",
-                    vib_features["rms"], vib_features["peak"], vib_features["kurtosis"],
-                    vib_features["crest_factor"], vib_features["sample_rate_hz"],
+                    vib_features["rms"],
+                    vib_features["peak"],
+                    vib_features["kurtosis"],
+                    vib_features["crest_factor"],
+                    vib_features["sample_rate_hz"],
                 )
                 if not vib_features["bearing_analysis_available"]:
                     logger.warning(
@@ -264,11 +287,17 @@ async def run_patrol(
                     )
 
             # === ACOUSTIC ===
-            logger.info("  [acoustic] listening (%.1fs) via %s ...",
-                        config.sensors.acoustic_duration, suite.acoustic.name)
+            logger.info(
+                "  [acoustic] listening (%.1fs) via %s ...",
+                config.sensors.acoustic_duration,
+                suite.acoustic.name,
+            )
             aco_sample = await _read_modality(
-                suite.acoustic, waypoint.station_id, "acoustic",
-                failures, sensor_failure_counter,
+                suite.acoustic,
+                waypoint.station_id,
+                "acoustic",
+                failures,
+                sensor_failure_counter,
             )
             if aco_sample is not None:
                 ultrasonic = aco_sample.ultrasonic_energy
@@ -281,13 +310,17 @@ async def run_patrol(
             # === THERMAL ===
             logger.info("  [thermal] scanning via %s ...", suite.thermal.name)
             thermal_frame = await _read_modality(
-                suite.thermal, waypoint.station_id, "thermal",
-                failures, sensor_failure_counter,
+                suite.thermal,
+                waypoint.station_id,
+                "thermal",
+                failures,
+                sensor_failure_counter,
             )
             if thermal_frame is not None:
                 logger.info(
                     "  [thermal] Max=%.1fC Mean=%.1fC Delta=%.1fC",
-                    thermal_frame.max_temp, thermal_frame.mean_temp,
+                    thermal_frame.max_temp,
+                    thermal_frame.mean_temp,
                     thermal_frame.delta_above_ambient,
                 )
 
@@ -295,8 +328,10 @@ async def run_patrol(
             measurement_id: int | None = None
             if vib_features is not None and patrol_id is not None:
                 measurement_id = await db.log_measurement(
-                    patrol_id, waypoint.station_id,
-                    datetime.now(UTC).isoformat(), vib_features,
+                    patrol_id,
+                    waypoint.station_id,
+                    datetime.now(UTC).isoformat(),
+                    vib_features,
                     source_name=suite.vibration.name,
                     simulated=getattr(suite.vibration, "simulated", False),
                 )
@@ -307,9 +342,11 @@ async def run_patrol(
                 logger.info("  [ai] analysis skipped (--skip-ai)")
             else:
                 history = await db.get_station_trend(waypoint.station_id, limit=5)
-                logger.info("  [ai] fusing %d modality reading(s)%s ...",
-                            sum(x is not None for x in (vib_sample, aco_sample, thermal_frame)),
-                            f" with {len(history)} historical" if history else "")
+                logger.info(
+                    "  [ai] fusing %d modality reading(s)%s ...",
+                    sum(x is not None for x in (vib_sample, aco_sample, thermal_frame)),
+                    f" with {len(history)} historical" if history else "",
+                )
                 try:
                     diagnosis = await fusion.analyze(
                         station_id=waypoint.station_id,
@@ -337,12 +374,15 @@ async def run_patrol(
 
                 if enable_drone and diagnosis.overall_health is not OverallHealth.HEALTHY:
                     await _maybe_deploy_drone(
-                        orchestrator, waypoint.station_id, diagnosis,
+                        orchestrator,
+                        waypoint.station_id,
+                        diagnosis,
                         stations_meta.get(waypoint.station_id, {}),
                     )
 
             station_measurement_hist.record(
-                time.time() - station_start, {"station.id": waypoint.station_id},
+                time.time() - station_start,
+                {"station.id": waypoint.station_id},
             )
 
         logger.info("")
@@ -353,11 +393,13 @@ async def run_patrol(
         n_faults = len([r for r in results if r.overall_health is not OverallHealth.HEALTHY])
         if patrol_id is not None:
             await db.complete_patrol(
-                patrol_id, datetime.now(UTC).isoformat(), len(results), n_faults,
+                patrol_id,
+                datetime.now(UTC).isoformat(),
+                len(results),
+                n_faults,
             )
 
-        _print_summary(route, results, failures, total_stations, orchestrator,
-                       enable_drone, drone)
+        _print_summary(route, results, failures, total_stations, orchestrator, enable_drone, drone)
 
         patrol_duration = time.time() - patrol_start
         patrol_duration_hist.record(patrol_duration, {"patrol.route": route.name})
@@ -383,9 +425,12 @@ def _log_diagnosis(diagnosis: FusedDiagnosis) -> None:
         else logging.INFO
     )
     logger.log(
-        level, "  [ai] %s HEALTH: %s (confidence %.0f%%, priority P%d, %s)",
-        icon, diagnosis.overall_health.value.upper(),
-        diagnosis.overall_confidence * 100, diagnosis.priority,
+        level,
+        "  [ai] %s HEALTH: %s (confidence %.0f%%, priority P%d, %s)",
+        icon,
+        diagnosis.overall_health.value.upper(),
+        diagnosis.overall_confidence * 100,
+        diagnosis.priority,
         diagnosis.inference_mode,
     )
     if diagnosis.correlated_faults:
@@ -420,8 +465,9 @@ async def _maybe_deploy_drone(
             return
 
 
-def _print_summary(route, results, failures, total_stations, orchestrator,
-                   enable_drone, drone) -> None:
+def _print_summary(
+    route, results, failures, total_stations, orchestrator, enable_drone, drone
+) -> None:
     logger.info("")
     logger.info("=" * 70)
     logger.info("PATROL COMPLETE — SUMMARY")
@@ -432,19 +478,24 @@ def _print_summary(route, results, failures, total_stations, orchestrator,
         logger.info(
             "  Stations: %d | Critical: %d | Warning: %d | Monitor: %d | Healthy: %d",
             len(results),
-            len(buckets[OverallHealth.CRITICAL]), len(buckets[OverallHealth.WARNING]),
-            len(buckets[OverallHealth.MONITOR]), len(buckets[OverallHealth.HEALTHY]),
+            len(buckets[OverallHealth.CRITICAL]),
+            len(buckets[OverallHealth.WARNING]),
+            len(buckets[OverallHealth.MONITOR]),
+            len(buckets[OverallHealth.HEALTHY]),
         )
         if enable_drone:
             logger.info(
                 "  Drone deployments: %d (%d successful)",
-                orchestrator.total_deployments, orchestrator.successful_deployments,
+                orchestrator.total_deployments,
+                orchestrator.successful_deployments,
             )
         for r in sorted(results, key=lambda x: x.priority):
             if r.overall_health is not OverallHealth.HEALTHY:
                 logger.warning(
                     "  P%d %s: %s — %s",
-                    r.priority, r.station_id, r.overall_health.value.upper(),
+                    r.priority,
+                    r.station_id,
+                    r.overall_health.value.upper(),
                     r.recommendation,
                 )
     else:
@@ -452,9 +503,12 @@ def _print_summary(route, results, failures, total_stations, orchestrator,
 
     logger.info(
         "  Sensor reliability: VIB %d/%d ACO %d/%d THM %d/%d",
-        total_stations - failures["vibration"], total_stations,
-        total_stations - failures["acoustic"], total_stations,
-        total_stations - failures["thermal"], total_stations,
+        total_stations - failures["vibration"],
+        total_stations,
+        total_stations - failures["acoustic"],
+        total_stations,
+        total_stations - failures["thermal"],
+        total_stations,
     )
     if enable_drone:
         logger.info("  Drone battery remaining: %s%%", drone.last_known_battery)
@@ -462,28 +516,36 @@ def _print_summary(route, results, failures, total_stations, orchestrator,
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="redRover — Multi-Modal Facility Health Robot"
-    )
+    parser = argparse.ArgumentParser(description="redRover — Multi-Modal Facility Health Robot")
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--simulate", dest="simulate", action="store_true",
-                      help="Run with simulated sensors and rover (default)")
-    mode.add_argument("--real", dest="simulate", action="store_false",
-                      help="Connect to real hardware; modalities without a driver "
-                           "are reported as sensor failures, never simulated")
+    mode.add_argument(
+        "--simulate",
+        dest="simulate",
+        action="store_true",
+        help="Run with simulated sensors and rover (default)",
+    )
+    mode.add_argument(
+        "--real",
+        dest="simulate",
+        action="store_false",
+        help="Connect to real hardware; modalities without a driver "
+        "are reported as sensor failures, never simulated",
+    )
     parser.set_defaults(simulate=True)
-    parser.add_argument("--skip-ai", action="store_true",
-                        help="Skip AI analysis (just collect sensor data)")
-    parser.add_argument("--no-drone", action="store_true",
-                        help="Disable drone deployment")
+    parser.add_argument(
+        "--skip-ai", action="store_true", help="Skip AI analysis (just collect sensor data)"
+    )
+    parser.add_argument("--no-drone", action="store_true", help="Disable drone deployment")
     args = parser.parse_args()
 
     try:
-        asyncio.run(run_patrol(
-            simulate=args.simulate,
-            skip_ai=args.skip_ai,
-            enable_drone=not args.no_drone,
-        ))
+        asyncio.run(
+            run_patrol(
+                simulate=args.simulate,
+                skip_ai=args.skip_ai,
+                enable_drone=not args.no_drone,
+            )
+        )
     finally:
         shutdown_telemetry()
 

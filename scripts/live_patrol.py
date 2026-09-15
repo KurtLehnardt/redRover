@@ -84,6 +84,7 @@ logger = logging.getLogger("redRover.live_patrol")
 # Terminal output helpers
 # ---------------------------------------------------------------------------
 
+
 def _banner(text: str, color: str = _CYAN) -> None:
     width = 60
     border = "=" * width
@@ -128,6 +129,7 @@ def _health_badge(health: OverallHealth) -> str:
 # macOS text-to-speech (non-blocking)
 # ---------------------------------------------------------------------------
 
+
 def _say(message: str) -> None:
     """Announce a message via macOS `say` command (non-blocking)."""
     try:
@@ -148,6 +150,7 @@ def _say(message: str) -> None:
 # Ollama health check
 # ---------------------------------------------------------------------------
 
+
 async def _check_ollama(host: str, model: str) -> bool:
     """Return True if Ollama is reachable and the model is available."""
     from src.ai.ollama import OllamaClient
@@ -160,7 +163,8 @@ async def _check_ollama(host: str, model: str) -> bool:
     if not present:
         logger.warning(
             "Model '%s' not found in Ollama. Available: %s",
-            model, ", ".join(available) or "(none)",
+            model,
+            ", ".join(available) or "(none)",
         )
     return present
 
@@ -168,6 +172,7 @@ async def _check_ollama(host: str, model: str) -> bool:
 # ---------------------------------------------------------------------------
 # Route generation
 # ---------------------------------------------------------------------------
+
 
 def _generate_patrol_route(
     n_stations: int,
@@ -181,8 +186,18 @@ def _generate_patrol_route(
     `drive_duration` seconds at `speed`, so exact coordinates are estimates.
     """
     station_names = [
-        "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot",
-        "Golf", "Hotel", "India", "Juliet", "Kilo", "Lima",
+        "Alpha",
+        "Bravo",
+        "Charlie",
+        "Delta",
+        "Echo",
+        "Foxtrot",
+        "Golf",
+        "Hotel",
+        "India",
+        "Juliet",
+        "Kilo",
+        "Lima",
     ]
     headings = [0, 90, 180, 270]
 
@@ -192,25 +207,29 @@ def _generate_patrol_route(
     waypoints = []
     x, y = 0.0, 0.0
     import math
+
     for i in range(n_stations):
         heading = headings[i % len(headings)]
         rad = math.radians(heading)
         x += leg_m * math.cos(rad)
         y += leg_m * math.sin(rad)
-        name = station_names[i] if i < len(station_names) else f"Station-{i+1}"
-        waypoints.append(Waypoint(
-            station_id=f"STN-{i+1:03d}",
-            x=round(x, 2),
-            y=round(y, 2),
-            heading=float(heading),
-            name=name,
-        ))
+        name = station_names[i] if i < len(station_names) else f"Station-{i + 1}"
+        waypoints.append(
+            Waypoint(
+                station_id=f"STN-{i + 1:03d}",
+                x=round(x, 2),
+                y=round(y, 2),
+                heading=float(heading),
+                name=name,
+            )
+        )
     return waypoints
 
 
 # ---------------------------------------------------------------------------
 # Main patrol
 # ---------------------------------------------------------------------------
+
 
 async def run_patrol(args: argparse.Namespace) -> None:
     """Execute the full patrol sequence."""
@@ -231,7 +250,8 @@ async def run_patrol(args: argparse.Namespace) -> None:
     station_counter = meter.create_counter("redrover.patrol.stations_visited")
     fault_counter = meter.create_counter("redrover.patrol.faults_detected")
     patrol_duration_hist = meter.create_histogram(
-        "redrover.patrol.duration_seconds", unit="s",
+        "redrover.patrol.duration_seconds",
+        unit="s",
     )
 
     # -- Database -----------------------------------------------------------
@@ -276,7 +296,11 @@ async def run_patrol(args: argparse.Namespace) -> None:
     _status("Drive duration", f"{args.duration}s per leg")
     _status("Mode", "SIMULATED" if simulate else "LIVE BLE", _YELLOW if simulate else _GREEN)
     _status("AI model", f"{ai_model} @ {ollama_host}")
-    _status("AI fusion", "SKIP (rule-based)" if args.skip_ai else "ENABLED", _YELLOW if args.skip_ai else _GREEN)
+    _status(
+        "AI fusion",
+        "SKIP (rule-based)" if args.skip_ai else "ENABLED",
+        _YELLOW if args.skip_ai else _GREEN,
+    )
 
     # Connect rover
     _section("Connecting to RVR+")
@@ -321,7 +345,9 @@ async def run_patrol(args: argparse.Namespace) -> None:
 
     _section("Patrol Route")
     for wp in waypoints:
-        _info(f"{wp.station_id}  {wp.name:12s}  heading={wp.heading:>5.0f}deg  ({wp.x:.1f}, {wp.y:.1f})")
+        _info(
+            f"{wp.station_id}  {wp.name:12s}  heading={wp.heading:>5.0f}deg  ({wp.x:.1f}, {wp.y:.1f})"
+        )
 
     # Start patrol in DB
     patrol_started = datetime.now(UTC).isoformat()
@@ -350,8 +376,10 @@ async def run_patrol(args: argparse.Namespace) -> None:
         _banner(f"Station {station_num}/{len(waypoints)}: {waypoint.name}", _BLUE)
 
         # -- a) Navigate ---------------------------------------------------
-        print(f"  {_BLUE}[NAV]{_RESET} Driving to {waypoint.name} "
-              f"(heading={waypoint.heading:.0f}deg, {args.duration}s @ speed {args.speed}) ...")
+        print(
+            f"  {_BLUE}[NAV]{_RESET} Driving to {waypoint.name} "
+            f"(heading={waypoint.heading:.0f}deg, {args.duration}s @ speed {args.speed}) ..."
+        )
         await rover.set_leds(0, 0, 255)  # Blue = navigating
         _say(f"Navigating to station {waypoint.name}")
 
@@ -381,14 +409,17 @@ async def run_patrol(args: argparse.Namespace) -> None:
             )
             try:
                 vib_sample = await imu_source.read(waypoint.station_id)
-                print(f"  {_CYAN}[IMU]{_RESET} Captured {len(vib_sample.raw_signal)} "
-                      f"samples @ {vib_sample.sample_rate} Hz")
+                print(
+                    f"  {_CYAN}[IMU]{_RESET} Captured {len(vib_sample.raw_signal)} "
+                    f"samples @ {vib_sample.sample_rate} Hz"
+                )
             except SourceUnavailable as exc:
                 print(f"  {_RED}[IMU]{_RESET} unavailable: {exc}")
                 vib_sample = None
         else:
             # Pick a random fault type occasionally for demo variety
             from src.sensors.vibration import FaultType
+
             fault_choices = list(FaultType)
             weights = [0.5] + [0.5 / (len(fault_choices) - 1)] * (len(fault_choices) - 1)
             fault_idx = np.random.choice(len(fault_choices), p=weights)
@@ -440,8 +471,10 @@ async def run_patrol(args: argparse.Namespace) -> None:
             print(f"  {_CYAN}[MIC]{_RESET} Recording {mic_duration}s @ {mic_sample_rate} Hz ...")
             try:
                 aco_sample = await mic_source.read(waypoint.station_id)
-                print(f"  {_CYAN}[MIC]{_RESET} Captured: "
-                      f"RMS={aco_sample.rms:.6f}  Peak={aco_sample.peak:.6f}")
+                print(
+                    f"  {_CYAN}[MIC]{_RESET} Captured: "
+                    f"RMS={aco_sample.rms:.6f}  Peak={aco_sample.peak:.6f}"
+                )
             except SourceUnavailable as exc:
                 print(f"  {_RED}[MIC]{_RESET} unavailable: {exc}")
                 aco_sample = None
@@ -468,8 +501,11 @@ async def run_patrol(args: argparse.Namespace) -> None:
         )
         fusion_elapsed = time.time() - fusion_start
 
-        _status("Inference mode", diagnosis.inference_mode,
-                _GREEN if diagnosis.inference_mode == "llm" else _YELLOW)
+        _status(
+            "Inference mode",
+            diagnosis.inference_mode,
+            _GREEN if diagnosis.inference_mode == "llm" else _YELLOW,
+        )
         _status("Inference time", f"{fusion_elapsed:.2f}s")
 
         # -- g) LED feedback ------------------------------------------------
@@ -504,7 +540,9 @@ async def run_patrol(args: argparse.Namespace) -> None:
         # OTel metrics
         station_counter.add(1, {"station.id": waypoint.station_id})
         if diagnosis.overall_health in (OverallHealth.WARNING, OverallHealth.CRITICAL):
-            fault_counter.add(1, {"station.id": waypoint.station_id, "health": diagnosis.overall_health.value})
+            fault_counter.add(
+                1, {"station.id": waypoint.station_id, "health": diagnosis.overall_health.value}
+            )
             total_faults += 1
 
         # Alert evaluation
@@ -533,9 +571,11 @@ async def run_patrol(args: argparse.Namespace) -> None:
             print(f"\n  {_DIM}Modality breakdown:{_RESET}")
             for mr in diagnosis.modality_results:
                 icon = f"{_RED}!" if mr.fault_detected else f"{_GREEN}ok"
-                print(f"    {icon}{_RESET} {mr.modality:12s} "
-                      f"{'FAULT: ' + mr.fault_type if mr.fault_detected else 'normal':24s} "
-                      f"conf={mr.confidence:.0%}  sev={mr.severity}")
+                print(
+                    f"    {icon}{_RESET} {mr.modality:12s} "
+                    f"{'FAULT: ' + mr.fault_type if mr.fault_detected else 'normal':24s} "
+                    f"conf={mr.confidence:.0%}  sev={mr.severity}"
+                )
 
         station_elapsed = time.time() - station_start
         print(f"\n  {_DIM}Station completed in {station_elapsed:.1f}s{_RESET}")
@@ -552,15 +592,17 @@ async def run_patrol(args: argparse.Namespace) -> None:
         _say(tts_msg)
 
         # Store result for summary
-        results.append({
-            "station": waypoint.name,
-            "station_id": waypoint.station_id,
-            "health": diagnosis.overall_health,
-            "confidence": diagnosis.overall_confidence,
-            "faults": diagnosis.correlated_faults,
-            "recommendation": diagnosis.recommendation,
-            "elapsed": station_elapsed,
-        })
+        results.append(
+            {
+                "station": waypoint.name,
+                "station_id": waypoint.station_id,
+                "health": diagnosis.overall_health,
+                "confidence": diagnosis.overall_confidence,
+                "faults": diagnosis.correlated_faults,
+                "recommendation": diagnosis.recommendation,
+                "elapsed": station_elapsed,
+            }
+        )
 
         # Brief pause between stations
         await asyncio.sleep(1.0)
@@ -594,11 +636,12 @@ async def run_patrol(args: argparse.Namespace) -> None:
     _status("Patrol ID", str(patrol_id))
     _status("Duration", f"{patrol_elapsed:.1f}s")
     _status("Stations visited", f"{len(results)}/{len(waypoints)}")
-    _status("Faults detected", str(total_faults),
-            _GREEN if total_faults == 0 else _RED)
+    _status("Faults detected", str(total_faults), _GREEN if total_faults == 0 else _RED)
 
-    print(f"\n  {_BOLD}{'Station':15s} {'Health':12s} {'Confidence':12s} {'Faults':30s} {'Time':>6s}{_RESET}")
-    print(f"  {'-'*80}")
+    print(
+        f"\n  {_BOLD}{'Station':15s} {'Health':12s} {'Confidence':12s} {'Faults':30s} {'Time':>6s}{_RESET}"
+    )
+    print(f"  {'-' * 80}")
     for r in results:
         hc = _health_color(r["health"])
         faults_str = ", ".join(r["faults"]) if r["faults"] else "-"
@@ -613,10 +656,14 @@ async def run_patrol(args: argparse.Namespace) -> None:
     # Overall facility health
     print()
     has_critical = any(r["health"] == OverallHealth.CRITICAL for r in results)
-    has_warning = any(r["health"] in (OverallHealth.WARNING, OverallHealth.MONITOR) for r in results)
+    has_warning = any(
+        r["health"] in (OverallHealth.WARNING, OverallHealth.MONITOR) for r in results
+    )
 
     if has_critical:
-        print(f"  {_BG_RED}{_BOLD} FACILITY STATUS: CRITICAL — IMMEDIATE MAINTENANCE REQUIRED {_RESET}")
+        print(
+            f"  {_BG_RED}{_BOLD} FACILITY STATUS: CRITICAL — IMMEDIATE MAINTENANCE REQUIRED {_RESET}"
+        )
         _say("Alert: Critical faults detected. Maintenance required.")
     elif has_warning:
         print(f"  {_BG_YELLOW}{_BOLD} FACILITY STATUS: WARNING — SCHEDULE MAINTENANCE {_RESET}")
@@ -644,6 +691,7 @@ async def run_patrol(args: argparse.Namespace) -> None:
 # CLI entry point
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="redRover — Live AI-Driven Patrol (Sphero RVR+ over BLE)",
@@ -658,27 +706,37 @@ Examples:
         """,
     )
     parser.add_argument(
-        "--stations", type=int, default=4,
+        "--stations",
+        type=int,
+        default=4,
         help="Number of patrol stations (default: 4)",
     )
     parser.add_argument(
-        "--speed", type=int, default=80,
+        "--speed",
+        type=int,
+        default=80,
         help="Drive speed 0-255 (default: 80)",
     )
     parser.add_argument(
-        "--duration", type=float, default=2.5,
+        "--duration",
+        type=float,
+        default=2.5,
         help="Drive time between stations in seconds (default: 2.5)",
     )
     parser.add_argument(
-        "--skip-ai", action="store_true",
+        "--skip-ai",
+        action="store_true",
         help="Skip Ollama/Gemma — use rule-based analysis only",
     )
     parser.add_argument(
-        "--simulate", action="store_true",
+        "--simulate",
+        action="store_true",
         help="Simulate rover (no BLE connection needed)",
     )
     parser.add_argument(
-        "--verbose", "-v", action="store_true",
+        "--verbose",
+        "-v",
+        action="store_true",
         help="Enable debug logging",
     )
 

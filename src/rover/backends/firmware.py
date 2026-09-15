@@ -111,9 +111,7 @@ class FirmwareRover:
 
     @property
     def capabilities(self) -> RoverCapabilities:
-        max_rate = max(
-            (s.descriptor.rate_hz for s in self.sensors.values()), default=0
-        )
+        max_rate = max((s.descriptor.rate_hz for s in self.sensors.values()), default=0)
         return RoverCapabilities(
             name=self._hello.board if self._hello else "firmware-rover",
             holonomic=bool(self._hello.holonomic) if self._hello else False,
@@ -122,9 +120,7 @@ class FirmwareRover:
                 for s in self.sensors.values()
             ),
             has_leds=False,
-            has_battery=any(
-                s.kind is wire.SensorKind.BATTERY for s in self.sensors.values()
-            )
+            has_battery=any(s.kind is wire.SensorKind.BATTERY for s in self.sensors.values())
             or (self._status is not None and self._status.battery_mv > 0),
             max_sensor_rate_hz=float(max_rate),
             max_speed_mps=(
@@ -161,9 +157,7 @@ class FirmwareRover:
     @property
     def sensor_data(self) -> dict:
         """Latest readings keyed by sensor name, in physical units."""
-        data = {
-            sensor.name: list(sensor.last_values) for sensor in self.sensors.values()
-        }
+        data = {sensor.name: list(sensor.last_values) for sensor in self.sensors.values()}
         data.update(self._injected)
         return data
 
@@ -177,9 +171,7 @@ class FirmwareRover:
         """
         for key, value in values.items():
             self._injected[key] = (
-                [float(v) for v in value]
-                if isinstance(value, (tuple, list))
-                else [float(value)]
+                [float(v) for v in value] if isinstance(value, (tuple, list)) else [float(value)]
             )
         if "locator" in values:
             locator = list(values["locator"])
@@ -202,9 +194,7 @@ class FirmwareRover:
 
         port = self.port or self._autodetect_port()
         if not port:
-            raise RuntimeError(
-                "no serial port configured or detected; set [rover].serial_port"
-            )
+            raise RuntimeError("no serial port configured or detected; set [rover].serial_port")
 
         logger.info("Opening firmware rover on %s @ %d baud", port, self.baud)
         self._serial = await asyncio.to_thread(
@@ -225,7 +215,9 @@ class FirmwareRover:
         self._hello = hello
         logger.info(
             "Firmware rover '%s' ready: %d sensors, %.2f m/s max, %d ms watchdog",
-            hello.board, hello.sensor_count, hello.max_linear_mm_s / 1000.0,
+            hello.board,
+            hello.sensor_count,
+            hello.max_linear_mm_s / 1000.0,
             hello.command_timeout_ms,
         )
 
@@ -241,8 +233,9 @@ class FirmwareRover:
         for candidate in list_ports.comports():
             device = candidate.device or ""
             # The usual suspects across macOS, Linux, and Windows.
-            if any(token in device for token in ("usbmodem", "usbserial", "ttyACM",
-                                                 "ttyUSB", "COM")):
+            if any(
+                token in device for token in ("usbmodem", "usbserial", "ttyACM", "ttyUSB", "COM")
+            ):
                 logger.info("Auto-detected serial port %s (%s)", device, candidate.description)
                 return device
         return ""
@@ -264,14 +257,19 @@ class FirmwareRover:
         if len(self.sensors) < expected:
             logger.warning(
                 "board advertised %d sensors but only %d descriptors arrived",
-                expected, len(self.sensors),
+                expected,
+                len(self.sensors),
             )
         for sensor in self.sensors.values():
             marker = " [FAILED TO START]" if sensor.descriptor.failed else ""
             logger.info(
                 "  sensor %d: %-16s %-14s %d ch @ %d Hz%s",
-                sensor.descriptor.id, sensor.name, sensor.kind.name,
-                sensor.descriptor.channels, sensor.descriptor.rate_hz, marker,
+                sensor.descriptor.id,
+                sensor.name,
+                sensor.kind.name,
+                sensor.descriptor.channels,
+                sensor.descriptor.rate_hz,
+                marker,
             )
 
     async def disconnect(self) -> None:
@@ -307,7 +305,10 @@ class FirmwareRover:
         return self._seq
 
     async def _send(
-        self, msg_type: wire.MsgType, payload: bytes = b"", expect_ack: bool = True,
+        self,
+        msg_type: wire.MsgType,
+        payload: bytes = b"",
+        expect_ack: bool = True,
         timeout: float = 1.0,
     ) -> wire.Ack | None:
         seq = self._next_seq()
@@ -381,7 +382,8 @@ class FirmwareRover:
                         wire.LogLevel.WARN: logging.WARNING,
                         wire.LogLevel.ERROR: logging.ERROR,
                     }[message.level],
-                    "[firmware] %s", message.text,
+                    "[firmware] %s",
+                    message.text,
                 )
         except wire.ProtocolError as exc:
             logger.debug("firmware rover: unparseable %s: %s", frame.type.name, exc)
@@ -436,7 +438,10 @@ class FirmwareRover:
         return min(distance_m / ground_speed, self.max_drive_seconds)
 
     async def drive(
-        self, linear_mm_s: int, angular_mrad_s: int, lateral_mm_s: int = 0,
+        self,
+        linear_mm_s: int,
+        angular_mrad_s: int,
+        lateral_mm_s: int = 0,
     ) -> None:
         """Issue a velocity command directly.
 
@@ -476,8 +481,10 @@ class FirmwareRover:
         # also throttles the forward component back, so the rover turns on the
         # spot rather than driving a wide arc away from the target.
         angular_mrad_s = int(
-            max(-self.turn_rate_mrad_s,
-                min(self.turn_rate_mrad_s, math.radians(error) * self.heading_gain * 1000))
+            max(
+                -self.turn_rate_mrad_s,
+                min(self.turn_rate_mrad_s, math.radians(error) * self.heading_gain * 1000),
+            )
         )
         forward_scale = max(0.0, math.cos(math.radians(min(abs(error), 90.0))))
         linear_mm_s = int((speed / 255.0) * self.max_speed_mps * 1000 * forward_scale)
@@ -504,9 +511,7 @@ class FirmwareRover:
         self._last_heading_update = now
         if elapsed <= 0.0 or elapsed > 1.0:
             return  # first command, or a gap too long to integrate honestly
-        self._heading = (
-            self._heading + math.degrees(angular_mrad_s / 1000.0 * elapsed)
-        ) % 360.0
+        self._heading = (self._heading + math.degrees(angular_mrad_s / 1000.0 * elapsed)) % 360.0
 
     async def _turn_by(self, degrees: float) -> None:
         """Rotate in place by `degrees`, open loop."""
@@ -516,7 +521,9 @@ class FirmwareRover:
         signed_rate = self.turn_rate_mrad_s if degrees > 0 else -self.turn_rate_mrad_s
 
         await self._send(
-            wire.MsgType.DRIVE, wire.drive_payload(0, signed_rate), expect_ack=False,
+            wire.MsgType.DRIVE,
+            wire.drive_payload(0, signed_rate),
+            expect_ack=False,
         )
         await self._drive_for(duration)
         await self.stop()
@@ -546,8 +553,12 @@ class FirmwareRover:
 
         logger.info(
             "Navigating to %s (%s) at (%.2f, %.2f) — %.2f m on heading %.0f",
-            waypoint.station_id, waypoint.name, waypoint.x, waypoint.y,
-            distance, target_heading,
+            waypoint.station_id,
+            waypoint.name,
+            waypoint.x,
+            waypoint.y,
+            distance,
+            target_heading,
         )
 
         try:
@@ -564,7 +575,8 @@ class FirmwareRover:
 
                 linear_mm_s = int(self.speed * self.max_speed_mps * 1000)
                 await self._send(
-                    wire.MsgType.DRIVE, wire.drive_payload(linear_mm_s, 0),
+                    wire.MsgType.DRIVE,
+                    wire.drive_payload(linear_mm_s, 0),
                     expect_ack=False,
                 )
                 await self._drive_for(travel_time)
@@ -678,7 +690,9 @@ class FirmwareRover:
         """Set a status LED through aux channel 0, if the sketch wires one up."""
         brightness = max(0, min(255, (r + g + b) // 3))
         await self._send(
-            wire.MsgType.SET_AUX, wire.set_aux_payload(0, brightness), expect_ack=False,
+            wire.MsgType.SET_AUX,
+            wire.set_aux_payload(0, brightness),
+            expect_ack=False,
         )
 
     async def get_battery(self) -> int | None:

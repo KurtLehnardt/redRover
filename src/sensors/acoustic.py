@@ -45,7 +45,7 @@ class AcousticSample:
     def __post_init__(self):
         sig = np.asarray(self.raw_signal, dtype=np.float64)
         self._stats = {
-            "rms": float(np.sqrt(np.mean(sig ** 2))) if sig.size else 0.0,
+            "rms": float(np.sqrt(np.mean(sig**2))) if sig.size else 0.0,
             "peak": float(np.max(np.abs(sig))) if sig.size else 0.0,
             "ultrasonic_energy": self._compute_ultrasonic(sig),
         }
@@ -57,11 +57,14 @@ class AcousticSample:
         nyquist = self.sample_rate / 2
         high_cutoff = min(44000, nyquist - 1000)
         sos = signal.butter(
-            4, [ULTRASONIC_BAND_LOW_HZ, high_cutoff],
-            btype="bandpass", fs=self.sample_rate, output="sos",
+            4,
+            [ULTRASONIC_BAND_LOW_HZ, high_cutoff],
+            btype="bandpass",
+            fs=self.sample_rate,
+            output="sos",
         )
         filtered = signal.sosfilt(sos, sig)
-        return float(np.sqrt(np.mean(filtered ** 2)))
+        return float(np.sqrt(np.mean(filtered**2)))
 
     @property
     def supports_ultrasonic(self) -> bool:
@@ -115,8 +118,11 @@ def extract_acoustic_features(sample: AcousticSample) -> dict:
     n = len(sample.raw_signal)
     if n == 0:
         return {
-            "rms": 0.0, "peak": 0.0, "ultrasonic_energy": None,
-            "rms_variance": 0.0, "rms_std": 0.0,
+            "rms": 0.0,
+            "peak": 0.0,
+            "ultrasonic_energy": None,
+            "rms_variance": 0.0,
+            "rms_std": 0.0,
             "supports_ultrasonic": sample.supports_ultrasonic,
             "partial_bands": [],
         }

@@ -35,18 +35,23 @@ logger = logging.getLogger("redRover.explore_map")
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="RVR+ room explorer & mapper")
-    p.add_argument('--speed', type=int, default=60, help='Drive speed 0-255 (default 60)')
-    p.add_argument('--duration', type=float, default=120,
-                   help='Exploration time in seconds (default 120)')
-    p.add_argument('--output', type=str, default='data/room_map.png',
-                   help='Output map image path')
-    p.add_argument('--simulate', action='store_true', help='Run without hardware')
-    p.add_argument('--cell-size', type=int, default=5, help='Grid cell size in cm (default 5)')
-    p.add_argument('--room-bounds', type=float, default=5.0,
-                   help='Max distance from origin in metres (default 5)')
-    p.add_argument('--seed', type=int, default=None,
-                   help='Seed the exploration RNG for reproducible runs')
-    p.add_argument('-v', '--verbose', action='store_true', help='Enable debug logging')
+    p.add_argument("--speed", type=int, default=60, help="Drive speed 0-255 (default 60)")
+    p.add_argument(
+        "--duration", type=float, default=120, help="Exploration time in seconds (default 120)"
+    )
+    p.add_argument("--output", type=str, default="data/room_map.png", help="Output map image path")
+    p.add_argument("--simulate", action="store_true", help="Run without hardware")
+    p.add_argument("--cell-size", type=int, default=5, help="Grid cell size in cm (default 5)")
+    p.add_argument(
+        "--room-bounds",
+        type=float,
+        default=5.0,
+        help="Max distance from origin in metres (default 5)",
+    )
+    p.add_argument(
+        "--seed", type=int, default=None, help="Seed the exploration RNG for reproducible runs"
+    )
+    p.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging")
     return p.parse_args()
 
 
@@ -66,8 +71,8 @@ def save_results(grid: OccupancyGrid, output_path: str, args: argparse.Namespace
     stats["room_bounds"] = args.room_bounds
     stats["path_points"] = len(grid.path)
 
-    stats_path = os.path.splitext(output_path)[0] + '_stats.json'
-    with open(stats_path, 'w') as f:
+    stats_path = os.path.splitext(output_path)[0] + "_stats.json"
+    with open(stats_path, "w") as f:
         json.dump(stats, f, indent=2)
     stats["_stats_path"] = stats_path
     return stats
@@ -77,7 +82,7 @@ async def main() -> None:
     args = parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
-        format='%(asctime)s %(levelname)-8s %(name)s: %(message)s',
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
 
     config = load_config()
@@ -106,7 +111,7 @@ async def main() -> None:
         loop.add_signal_handler(sig, explorer.request_stop)
 
     try:
-        logger.info("Connecting to RVR+ (%s) ...", 'simulated' if args.simulate else 'BLE')
+        logger.info("Connecting to RVR+ (%s) ...", "simulated" if args.simulate else "BLE")
         await rover.connect()
         logger.info("Starting exploration: speed=%d, duration=%ss", args.speed, args.duration)
         await explorer.run()
@@ -146,5 +151,5 @@ async def main() -> None:
         print(f"  Stats saved to: {stats['_stats_path']}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main())
