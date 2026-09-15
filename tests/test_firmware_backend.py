@@ -351,3 +351,153 @@ async def test_firmware_source_refuses_a_board_with_no_accelerometer(rover_and_b
     source = FirmwareVibrationSource(rover, duration=0.05)
     with pytest.raises(SourceUnavailable, match="no accelerometer"):
         await source.read("M-001")
+
+
+# === Regressions found reviewing this PR ===
+
+
+@pytest.mark.asyncio
+async def test_drive_with_heading_is_continuous_and_non_blocking(rover_and_board):
+    """Regression: it used to turn in place, blocking for the whole rotation.
+
+    RoomExplorer calls this at ~10 Hz with small heading corrections. A
+    blocking turn per call meant a firmware rover stuttered in place and
+    covered no ground, so mapping produced an empty map.
+    """
+    import time as _time
+
+    rover, board = rover_and_board
+    rover._heading = 0.0
+
+    started = _time.monotonic()
+    await rover.drive_with_heading(200, 90)  # a 90-degree error
+    elapsed = _time.monotonic() - started
+    await asyncio.sleep(0.05)
+
+    # Returns immediately rather than blocking for a rotation.
+    assert elapsed < 0.1
+    # One command, carrying both a forward and a steering component.
+    assert len(board.drive_commands) == 1
+    linear, angular, _ = board.drive_commands[0]
+    assert angular > 0, "should steer toward the target heading"
+    assert board.stopped == 0, "must not stop the motors to turn"
+
+
+@pytest.mark.asyncio
+async def test_heading_error_throttles_the_forward_component(rover_and_board):
+    """A large error turns nearly on the spot; a small one barely slows down."""
+    rover, board = rover_and_board
+
+    rover._heading = 0.0
+    await rover.drive_with_heading(255, 180)  # straight backwards
+    await asyncio.sleep(0.02)
+    big_error_linear = board.drive_commands[-1][0]
+
+    rover._heading = 0.0
+    await rover.drive_with_heading(255, 5)  # nearly aligned
+    await asyncio.sleep(0.02)
+    small_error_linear = board.drive_commands[-1][0]
+
+    assert big_error_linear < small_error_linear
+    assert small_error_linear > 900  # ~full speed at 1.0 m/s
+
+
+@pytest.mark.asyncio
+async def test_repeated_heading_commands_keep_driving(rover_and_board):
+    """The explorer's call pattern must produce continuous motion."""
+    rover, board = rover_and_board
+    for heading in (0, 12, 25, 31, 44):
+        await rover.drive_with_heading(150, heading)
+    await asyncio.sleep(0.05)
+
+    assert len(board.drive_commands) == 5
+    assert board.stopped == 0
+    assert all(linear > 0 for linear, _, _ in board.drive_commands)
+
+
+@pytest.mark.asyncio
+async def test_measured_heading_stops_the_open_loop_integrator(rover_and_board):
+    rover, board = rover_and_board
+    odometry = wire.SensorDescriptor(
+        id=1, kind=wire.SensorKind.ODOMETRY, unit=wire.Unit.METRE, channels=3,
+        scale_exp=0, rate_hz=20, failed=False, name="odom",
+    )
+    board.sensors.append(odometry)
+    await rover._handshake()
+    await rover._request_descriptors(expected=2)
+
+    board.emit_sample(1, 100, [0, 0, 137])  # measured heading of 137 degrees
+    await asyncio.sleep(0.05)
+    assert rover.heading == pytest.approx(137.0)
+
+    # An open-loop command must not overwrite a measured heading.
+    await rover.drive_with_heading(100, 200)
+    await asyncio.sleep(0.02)
+    assert rover.heading == pytest.approx(137.0)
+
+
+def test_clear_estop_warns_when_it_cannot_reach_the_board(caplog):
+    """Silently leaving the board latched is worse than saying so.
+
+    Deliberately synchronous: with no running loop there is nothing to
+    schedule the clear frame on, which is exactly the case that used to fail
+    without a word.
+    """
+    import logging
+
+    rover = FirmwareRover(port="fake")
+    rover._estop = True
+    with caplog.at_level(logging.WARNING):
+        rover.clear_estop()
+    assert any("still" in record.message and "latched" in record.message
+               for record in caplog.records)
+
+
+# === The backend split must reach every call site ===
+
+
+def test_no_module_constructs_a_rover_outside_the_factory():
+    """Regression: the mapper, the dashboard, and live_patrol each built a
+    RoverController directly, so connection = "serial" raised ValueError."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    offenders = []
+    for path in list((root / "src").rglob("*.py")) + list((root / "scripts").rglob("*.py")):
+        if path.name == "factory.py":
+            continue
+        if re.search(r"^\s*rover\s*=\s*RoverController\(", path.read_text(), re.M):
+            offenders.append(str(path.relative_to(root)))
+    assert offenders == [], f"should use create_rover(): {offenders}"
+
+
+@pytest.mark.asyncio
+async def test_explorer_runs_against_a_firmware_rover(tmp_path):
+    """Regression: RoomExplorer's simulated loop needs inject_sensor_data,
+    which FirmwareRover did not implement, so `explore_map --simulate` with
+    connection = "serial" raised AttributeError."""
+    from src.mapping import OccupancyGrid, RoomExplorer
+
+    config = load_config()
+    config.rover.connection = "serial"
+    config.simulation.time_scale = 0.0
+
+    rover = create_rover(config, simulate=True)
+    await rover.connect()
+    grid = OccupancyGrid(width_m=4.0, height_m=4.0, cell_cm=10)
+    explorer = RoomExplorer(
+        rover=rover, grid=grid, speed=60, duration=0.4,
+        room_bounds_m=2.0, simulate=True, seed=1,
+    )
+    await explorer.run()
+
+    assert grid.stats()["free"] > 0
+
+
+def test_injected_values_never_masquerade_as_board_readings():
+    rover = FirmwareRover(simulate=True)
+    rover.inject_sensor_data(accelerometer=(0.0, 0.0, 1.0))
+    assert rover.sensor_data["accelerometer"] == [0.0, 0.0, 1.0]
+    # The overlay is separate from anything a board reported.
+    assert rover.sensors == {}

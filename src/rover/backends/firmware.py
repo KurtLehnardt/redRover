@@ -67,6 +67,7 @@ class FirmwareRover:
         max_speed_mps: float = 1.5,
         max_drive_seconds: float = 20.0,
         turn_rate_mrad_s: int = 1500,
+        heading_gain: float = 2.0,
         time_scale: float = 1.0,
     ):
         self.port = port
@@ -76,6 +77,8 @@ class FirmwareRover:
         self.max_speed_mps = max_speed_mps
         self.max_drive_seconds = max_drive_seconds
         self.turn_rate_mrad_s = turn_rate_mrad_s
+        # Proportional gain from heading error (rad) to angular rate (rad/s).
+        self.heading_gain = heading_gain
         self.time_scale = max(0.0, time_scale)
         self.state = RoverState.IDLE
 
@@ -87,10 +90,17 @@ class FirmwareRover:
         self._position = (0.0, 0.0)
         self._heading = 0.0
         self._position_estimated = True
+        # True once an odometry sensor has reported a measured heading, after
+        # which the open-loop integrator stops guessing.
+        self._heading_measured = False
+        self._last_heading_update = 0.0
+        self._commanded_heading = 0.0
         self._hello: wire.HelloAck | None = None
         self._status: wire.Status | None = None
 
         self.sensors: dict[int, FirmwareSensor] = {}
+        # Simulation/test overlay; see inject_sensor_data.
+        self._injected: dict[str, list[float]] = {}
         self._sensor_callbacks: list = []
         self._callback_tasks: set[asyncio.Task] = set()
         self._pump_task: asyncio.Task | None = None
@@ -151,9 +161,30 @@ class FirmwareRover:
     @property
     def sensor_data(self) -> dict:
         """Latest readings keyed by sensor name, in physical units."""
-        return {
+        data = {
             sensor.name: list(sensor.last_values) for sensor in self.sensors.values()
         }
+        data.update(self._injected)
+        return data
+
+    def inject_sensor_data(self, **values) -> None:
+        """Set sensor values directly.
+
+        Simulation and test seam only -- RoomExplorer's simulated loop feeds
+        the backend through this. Injected values are kept in a separate
+        overlay so they can never be confused with a reading that arrived from
+        a board.
+        """
+        for key, value in values.items():
+            self._injected[key] = (
+                [float(v) for v in value]
+                if isinstance(value, (tuple, list))
+                else [float(value)]
+            )
+        if "locator" in values:
+            locator = list(values["locator"])
+            self._position = (float(locator[0]), float(locator[1]))
+        self._dispatch_callbacks()
 
     # -- connection ---------------------------------------------------------
 
@@ -219,8 +250,7 @@ class FirmwareRover:
     async def _handshake(self) -> wire.HelloAck | None:
         deadline = time.monotonic() + HANDSHAKE_TIMEOUT_S
         while time.monotonic() < deadline:
-            future = await self._send(wire.MsgType.HELLO, expect_ack=False)
-            del future
+            await self._send(wire.MsgType.HELLO, expect_ack=False)
             await asyncio.sleep(0.2)
             if self._hello is not None:
                 return self._hello
@@ -369,7 +399,8 @@ class FirmwareRover:
             self._position = (sensor.last_values[0], sensor.last_values[1])
             self._position_estimated = False
             if len(sensor.last_values) >= 3:
-                self._heading = sensor.last_values[2]
+                self._heading = sensor.last_values[2] % 360.0
+                self._heading_measured = True
 
         self._dispatch_callbacks()
 
@@ -405,24 +436,61 @@ class FirmwareRover:
         return min(distance_m / ground_speed, self.max_drive_seconds)
 
     async def drive_with_heading(self, speed: int, heading: int) -> None:
-        """Drive at `speed` (0-255) on `heading` degrees.
+        """Drive at `speed` (0-255) steering toward `heading` degrees.
 
-        The firmware is a velocity interface with no heading loop of its own,
-        so this turns in place to the requested heading and then drives. The
-        resulting pose is dead-reckoned unless an odometry sensor is present.
+        This is a **continuous, non-blocking** command, matching how the RVR+
+        behaves and how the explorer uses it: called at ~10 Hz with small
+        heading corrections. Implementing it as turn-in-place-then-go made
+        every call block for the duration of a rotation, so a firmware rover
+        stuttered in place and never covered any ground.
+
+        The firmware has no heading loop of its own, so the heading error is
+        converted into an angular velocity and the chassis curves onto the
+        heading while still moving. With an odometry sensor the error is
+        measured; without one it is integrated from the commanded rate, and
+        the pose stays flagged as estimated.
         """
         if self._estop and speed:
             return
-        target = int(heading) % 360
-        turn = heading_difference(target, self._heading)
-        if abs(turn) > 1.0:
-            await self._turn_by(turn)
 
-        self._heading = float(target)
-        linear_mm_s = int((speed / 255.0) * self.max_speed_mps * 1000)
-        await self._send(
-            wire.MsgType.DRIVE, wire.drive_payload(linear_mm_s, 0), expect_ack=False,
+        target = float(int(heading) % 360)
+        error = heading_difference(target, self._heading)
+
+        # Proportional steering, clamped to the chassis limit. A large error
+        # also throttles the forward component back, so the rover turns on the
+        # spot rather than driving a wide arc away from the target.
+        angular_mrad_s = int(
+            max(-self.turn_rate_mrad_s,
+                min(self.turn_rate_mrad_s, math.radians(error) * self.heading_gain * 1000))
         )
+        forward_scale = max(0.0, math.cos(math.radians(min(abs(error), 90.0))))
+        linear_mm_s = int((speed / 255.0) * self.max_speed_mps * 1000 * forward_scale)
+
+        await self._send(
+            wire.MsgType.DRIVE,
+            wire.drive_payload(linear_mm_s, angular_mrad_s),
+            expect_ack=False,
+        )
+        self._integrate_heading(angular_mrad_s)
+        self._commanded_heading = target
+
+    def _integrate_heading(self, angular_mrad_s: int) -> None:
+        """Advance the open-loop heading estimate since the last command.
+
+        Only used when no odometry sensor reports a measured heading; the
+        result is an estimate and is never presented as a measurement.
+        """
+        now = time.monotonic()
+        if self._heading_measured:
+            self._last_heading_update = now
+            return
+        elapsed = now - self._last_heading_update if self._last_heading_update else 0.0
+        self._last_heading_update = now
+        if elapsed <= 0.0 or elapsed > 1.0:
+            return  # first command, or a gap too long to integrate honestly
+        self._heading = (
+            self._heading + math.degrees(angular_mrad_s / 1000.0 * elapsed)
+        ) % 360.0
 
     async def _turn_by(self, degrees: float) -> None:
         """Rotate in place by `degrees`, open loop."""
@@ -527,18 +595,34 @@ class FirmwareRover:
         await self._send(wire.MsgType.ESTOP, bytes([1]), expect_ack=False)
 
     def clear_estop(self) -> None:
+        """Release the local latch and tell the board, if a loop is running.
+
+        The board latches independently, so a clear that never reaches it
+        leaves the robot refusing to move with no indication why. When there
+        is no running loop to schedule the frame on, say so rather than
+        failing silently; ``clear_estop_async`` is the reliable form.
+        """
         self._estop = False
         if self.state is RoverState.ESTOP:
             self.state = RoverState.IDLE
-        # Fire-and-forget: the caller is synchronous, and the firmware also
-        # accepts the clear on the next command round trip.
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
+            logger.warning(
+                "clear_estop() called outside an event loop: the board is still "
+                "latched. Await clear_estop_async() to clear it."
+            )
             return
-        task = loop.create_task(self._send(wire.MsgType.ESTOP, bytes([0]), expect_ack=False))
+        task = loop.create_task(self.clear_estop_async())
         self._callback_tasks.add(task)
         task.add_done_callback(self._callback_tasks.discard)
+
+    async def clear_estop_async(self) -> None:
+        """Release the latch locally and on the board."""
+        self._estop = False
+        if self.state is RoverState.ESTOP:
+            self.state = RoverState.IDLE
+        await self._send(wire.MsgType.ESTOP, bytes([0]), expect_ack=False)
 
     # -- sensors ------------------------------------------------------------
 

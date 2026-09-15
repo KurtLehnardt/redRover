@@ -204,6 +204,18 @@ turns. Milliradians give ±1877 °/s, and `v = ω·r` needs no π constant when 
 in radians. The native unit test suite caught this; see
 `test/test_drive/test_main.cpp`.
 
+### Heading control
+
+The firmware is a **velocity** interface: it has no heading loop of its own.
+The host's `drive_with_heading(speed, heading)` converts heading error into an
+angular rate and issues a single non-blocking command, so the chassis curves
+onto the heading while still moving. With an odometry sensor registered the
+error is measured; without one the heading is integrated from the commanded
+rate and the pose stays flagged as estimated.
+
+Register a sensor with `SensorKind::Odometry` reporting `x, y, heading` to close
+that loop properly.
+
 The Python mirror lives in `src/rover/wire.py`. `tests/test_wire.py` replays
 golden frames emitted by `tools/gen_vectors.cpp`, so the two implementations
 cannot drift apart without a test failing.
