@@ -23,6 +23,17 @@
 #   Copy-paste this entire file into the Sphero EDU custom program editor.
 #   No imports needed — all functions are pre-loaded in the EDU sandbox.
 #
+# WHAT THIS CAN AND CANNOT TELL YOU:
+#   The EDU sandbox polls the IMU at roughly 10 Hz, so this program can only
+#   see vibration below about 5 Hz. That is enough to compare one station
+#   against another and to spot gross shaking, and it is nowhere near enough
+#   to diagnose a machine: bearing defect frequencies live between 1 and
+#   5 kHz, two to three orders of magnitude above what this samples.
+#
+#   So the three levels below describe the *vibration level this robot
+#   measured*, not the health of the machine. For real fault diagnosis use the
+#   host-side pipeline with a kHz-rate accelerometer — see firmware/README.md.
+#
 # HACKATHON: redRover — Multi-Modal Facility Health Robot
 # ============================================================================
 
@@ -44,7 +55,9 @@ async def start_program():
     NUM_SAMPLES = 20
     SAMPLE_INTERVAL = 0.1  # seconds between samples (20 samples ~ 2 sec total)
 
-    # Vibration health thresholds (in g-force for acceleration)
+    # Vibration level thresholds (in g-force). These are relative: they
+    # separate "this station shook more than that one" at 10 Hz. They are not
+    # machine-health thresholds -- see the note at the top of the file.
     HEALTHY_RMS_THRESHOLD = 0.15
     WARNING_PEAK_THRESHOLD = 0.5
 
@@ -145,6 +158,11 @@ async def start_program():
         accel_data = samples["accel"]
         gyro_data = samples["gyro"]
         n = len(accel_data)
+        if n == 0:
+            return {
+                "rms_accel": 0.0, "peak_accel": 0.0, "avg_gyro": 0.0,
+                "health": "NO DATA", "color": COLOR_BLUE,
+            }
 
         # RMS Acceleration — overall vibration energy
         sum_sq = 0.0
@@ -164,7 +182,7 @@ async def start_program():
             gyro_sum = gyro_sum + val
         avg_gyro = gyro_sum / n
 
-        # Health Classification
+        # Vibration level, from what the 10 Hz IMU poll could see.
         if peak_accel > WARNING_PEAK_THRESHOLD:
             health = "CRITICAL"
             color = COLOR_RED
@@ -185,13 +203,16 @@ async def start_program():
 
     def build_diagnosis_message(station_label, analysis):
         """Build a human-readable TTS diagnosis string."""
+        # Phrased as a measurement, not a diagnosis: at 10 Hz this robot cannot
+        # see a bearing fault, and calling a station "healthy" would claim it
+        # checked something it never sampled.
         health = analysis["health"]
         if health == "HEALTHY":
-            return station_label + " is healthy. Vibration nominal."
+            return station_label + ". Vibration low."
         elif health == "WARNING":
-            return station_label + " warning. Elevated vibration detected."
+            return station_label + ". Vibration elevated. Worth a closer look."
         else:
-            return station_label + " critical! High vibration alert!"
+            return station_label + ". Vibration high! Inspect this station."
 
     # -----------------------------------------------------------------
     # BOOT-UP SEQUENCE

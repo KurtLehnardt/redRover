@@ -32,6 +32,29 @@ class FaultType(str, Enum):
     IMBALANCE = "imbalance"
 
 
+# Below this relative spread, the fourth moment is dominated by floating-point
+# cancellation rather than by the signal.
+_DEGENERATE_SIGNAL_TOLERANCE = 1e-12
+
+
+def _kurtosis(sig: NDArray) -> float:
+    """Excess kurtosis, or 0.0 for a signal too flat to have one.
+
+    ``scipy.stats.kurtosis`` warns and returns an unreliable number when the
+    data are nearly identical, because the fourth moment is then almost
+    entirely cancellation error. A constant signal has no meaningful kurtosis,
+    and a made-up value here would flow straight into the bearing rules, which
+    key on it -- so report the absence instead.
+    """
+    if sig.size <= 3:
+        return 0.0
+    spread = float(np.std(sig))
+    scale = max(float(np.max(np.abs(sig))), 1.0)
+    if spread <= _DEGENERATE_SIGNAL_TOLERANCE * scale:
+        return 0.0
+    return float(_scipy_kurtosis(sig))
+
+
 @dataclass
 class VibrationSample:
     """A single vibration measurement from a machine station.
@@ -58,7 +81,7 @@ class VibrationSample:
             "rms": rms,
             "peak": peak,
             "crest_factor": (peak / rms) if rms else 0.0,
-            "kurtosis": float(_scipy_kurtosis(sig)) if sig.size > 3 else 0.0,
+            "kurtosis": _kurtosis(sig),
         }
 
     @property
