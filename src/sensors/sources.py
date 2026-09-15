@@ -150,6 +150,103 @@ class RoverIMUVibrationSource:
         )
 
 
+class FirmwareVibrationSource:
+    """Vibration capture from a firmware rover's accelerometer.
+
+    This is the source that makes bearing analysis real. The board streams an
+    analog accelerometer at its native rate — typically 1 kHz, versus the tens
+    of Hz a BLE toy rover manages — and reports that rate in its descriptor, so
+    the sample carries a truthful ``sample_rate`` and the fusion engine stops
+    suppressing bearing verdicts.
+    """
+
+    simulated = False
+
+    def __init__(self, rover, duration: float = 2.0):
+        self.rover = rover
+        self.duration = duration
+        self.name = "firmware-accel"
+        self.max_frequency_hz: float | None = None
+
+    async def read(self, station_id: str) -> VibrationSample:
+        from ..rover import wire
+
+        sensor = self.rover.find_sensor(wire.SensorKind.ACCELERATION)
+        if sensor is None:
+            raise SourceUnavailable(
+                "the board reports no accelerometer; add one to the sketch's "
+                "SensorRegistry (see firmware/README.md)"
+            )
+
+        rate_hz = sensor.descriptor.rate_hz
+        self.max_frequency_hz = rate_hz / 2 if rate_hz else None
+        if rate_hz and rate_hz < BEARING_ANALYSIS_MIN_RATE_HZ:
+            logger.warning(
+                "[VIB] %s streams at %d Hz — below the %d Hz needed for bearing "
+                "analysis. Raise the sensor's rateHz, or use a faster board.",
+                sensor.name, rate_hz, BEARING_ANALYSIS_MIN_RATE_HZ,
+            )
+
+        samples: list[float] = []
+        seen_at: list[int] = []
+
+        async def collect(_data):
+            if sensor.last_timestamp_ms in seen_at:
+                return  # same sample, seen again; do not duplicate it
+            seen_at.append(sensor.last_timestamp_ms)
+            if len(seen_at) > 4:
+                seen_at.pop(0)
+            values = sensor.last_values
+            if values:
+                magnitude = float(np.sqrt(sum(v * v for v in values)))
+                samples.append(magnitude - 1.0)  # drop the 1 g gravity offset
+
+        started_streaming = False
+        self.rover.add_sensor_callback(collect)
+        try:
+            if not self.rover.streaming:
+                period_ms = max(1, int(1000 / rate_hz)) if rate_hz else 10
+                await self.rover.start_sensor_streaming(period_ms=period_ms)
+                started_streaming = True
+
+            started = time.monotonic()
+            while time.monotonic() - started < self.duration:
+                await asyncio.sleep(0.01)
+            elapsed = time.monotonic() - started
+        finally:
+            self.rover.remove_sensor_callback(collect)
+            if started_streaming:
+                try:
+                    await self.rover.stop_sensor_streaming()
+                except Exception as exc:  # pragma: no cover - cleanup best effort
+                    logger.debug("stop_sensor_streaming after capture: %s", exc)
+
+        if len(samples) < 8:
+            raise SourceUnavailable(
+                f"accelerometer produced only {len(samples)} samples in "
+                f"{self.duration:.1f}s; check the serial baud rate"
+            )
+
+        # Trust what actually arrived over the true elapsed window, not the
+        # rate the board advertised: a saturated serial link silently drops
+        # samples, and claiming the nominal rate would fabricate bandwidth.
+        effective_rate = int(round(len(samples) / max(elapsed, 1e-6)))
+        if rate_hz and effective_rate < rate_hz * 0.8:
+            logger.warning(
+                "[VIB] %s advertised %d Hz but delivered %d Hz; the link is the "
+                "bottleneck. Raise the serial baud rate.",
+                sensor.name, rate_hz, effective_rate,
+            )
+
+        return VibrationSample(
+            station_id=station_id,
+            timestamp=time.time(),
+            raw_signal=np.asarray(samples, dtype=np.float32),
+            sample_rate=effective_rate,
+            duration=elapsed,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Acoustic
 # ---------------------------------------------------------------------------
@@ -396,8 +493,12 @@ def build_sensor_suite(
         )
 
     sensor_type = config.sensors.sensor_type
-    if sensor_type == "imu" and rover is not None:
-        vibration: SensorSource = RoverIMUVibrationSource(
+    if sensor_type == "firmware" and rover is not None and hasattr(rover, "find_sensor"):
+        vibration: SensorSource = FirmwareVibrationSource(
+            rover, duration=config.sensors.firmware_capture_seconds,
+        )
+    elif sensor_type == "imu" and rover is not None:
+        vibration = RoverIMUVibrationSource(
             rover,
             duration=float(config.sensors.measurement_duration),
             period_ms=config.sensors.imu_period_ms,
@@ -406,8 +507,9 @@ def build_sensor_suite(
         vibration = UnavailableSource(
             "vibration",
             f"no driver for sensor_type={sensor_type!r}; set [sensors].sensor_type "
-            "to 'imu' with a connected rover, or attach a firmware rover "
-            "(see firmware/README.md) for kHz-rate sampling",
+            "to 'imu' with a connected rover, or to 'firmware' with "
+            "[rover].connection='serial' for kHz-rate sampling "
+            "(see firmware/README.md)",
         )
 
     acoustic: SensorSource

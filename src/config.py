@@ -16,7 +16,11 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 
 
 class RoverConfig(BaseModel):
+    # "ble" / "uart" -> Sphero RVR+; "serial" -> any board running firmware/
     connection: str = "ble"
+    # Serial port for connection="serial". Empty means auto-detect.
+    serial_port: str = ""
+    serial_baud: int = 115200
     speed: float = 0.3
     dwell_time: int = 10
     # Measured ground speed at full throttle; used to convert a drive command
@@ -40,6 +44,8 @@ class SensorConfig(BaseModel):
     measurement_duration: int = 5
     # "imu" (rover IMU stream), "usb_accel", "contact_mic", "firmware"
     sensor_type: str = "imu"
+    # Seconds of accelerometer stream to collect per firmware measurement.
+    firmware_capture_seconds: float = 2.0
     imu_period_ms: int = 20
     acoustic_sample_rate: int = 96000
     acoustic_duration: float = 3.0

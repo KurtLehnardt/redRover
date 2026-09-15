@@ -341,6 +341,24 @@ class RoverController:
         return self._position_estimated
 
     @property
+    def capabilities(self):
+        """What this chassis can do. See :mod:`src.rover.backends.base`."""
+        from .backends.base import RoverCapabilities
+
+        return RoverCapabilities(
+            name="sphero-rvr-plus",
+            holonomic=False,
+            has_odometry=True,      # the locator, when streaming
+            has_leds=True,
+            has_battery=True,
+            # The RVR+ streams sensors at tens of Hz. That is enough for
+            # imbalance and misalignment, and nowhere near enough for bearing
+            # defect frequencies -- see README "Sensor bandwidth".
+            max_sensor_rate_hz=50.0,
+            max_speed_mps=self.max_speed_mps,
+        )
+
+    @property
     def connected(self) -> bool:
         if self.simulate:
             return True

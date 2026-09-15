@@ -1,0 +1,13 @@
+{
+  "name": "RedRover",
+  "version": "1.0.0",
+  "description": "Portable firmware for the redRover facility-health robot: a self-describing sensor registry, pluggable drive bases, and a framed host protocol that runs on any Arduino-class controller.",
+  "keywords": ["robotics", "sensors", "predictive-maintenance", "rover", "protocol"],
+  "license": "MIT",
+  "frameworks": ["arduino"],
+  "platforms": ["atmelavr", "espressif32", "raspberrypi", "teensy", "ststm32", "native"],
+  "headers": ["redRover.h"],
+  "export": {
+    "exclude": ["redrover/testing"]
+  }
+}
