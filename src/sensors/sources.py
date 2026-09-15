@@ -157,7 +157,9 @@ class RoverIMUVibrationSource:
                 "[VIB] %s delivered %d Hz — below the %d Hz needed for bearing "
                 "analysis. Low-frequency faults (imbalance, misalignment, "
                 "looseness) remain valid; bearing verdicts will be suppressed.",
-                self.name, effective_rate, BEARING_ANALYSIS_MIN_RATE_HZ,
+                self.name,
+                effective_rate,
+                BEARING_ANALYSIS_MIN_RATE_HZ,
             )
 
         return VibrationSample(
@@ -203,7 +205,9 @@ class FirmwareVibrationSource:
             logger.warning(
                 "[VIB] %s streams at %d Hz — below the %d Hz needed for bearing "
                 "analysis. Raise the sensor's rateHz, or use a faster board.",
-                sensor.name, rate_hz, BEARING_ANALYSIS_MIN_RATE_HZ,
+                sensor.name,
+                rate_hz,
+                BEARING_ANALYSIS_MIN_RATE_HZ,
             )
 
         samples: list[float] = []
@@ -254,7 +258,9 @@ class FirmwareVibrationSource:
             logger.warning(
                 "[VIB] %s advertised %d Hz but delivered %d Hz; the link is the "
                 "bottleneck. Raise the serial baud rate.",
-                sensor.name, rate_hz, effective_rate,
+                sensor.name,
+                rate_hz,
+                effective_rate,
             )
 
         return VibrationSample(
@@ -280,9 +286,7 @@ class SimulatedAcousticSource:
     simulated: bool = True
 
     async def read(self, station_id: str) -> AcousticSample:
-        fault, severity = (self.scenarios or {}).get(
-            station_id, (AcousticFaultType.NORMAL, 0.0)
-        )
+        fault, severity = (self.scenarios or {}).get(station_id, (AcousticFaultType.NORMAL, 0.0))
         return simulator.generate_acoustic_sample(
             station_id=station_id,
             fault_type=fault,
@@ -319,7 +323,8 @@ class MicrophoneAcousticSource:
             logger.warning(
                 "[ACO] %s runs at %d Hz; ultrasonic (20-48 kHz) leak detection "
                 "needs >=96 kHz and will be reported as unavailable.",
-                self.name, self.sample_rate,
+                self.name,
+                self.sample_rate,
             )
             self._warned_bandwidth = True
 
@@ -363,9 +368,7 @@ class SimulatedThermalSource:
     simulated: bool = True
 
     async def read(self, station_id: str) -> ThermalFrame:
-        fault, severity = (self.scenarios or {}).get(
-            station_id, (ThermalFaultType.NORMAL, 0.0)
-        )
+        fault, severity = (self.scenarios or {}).get(station_id, (ThermalFaultType.NORMAL, 0.0))
         return simulator.generate_thermal_frame(
             station_id=station_id,
             fault_type=fault,
@@ -393,9 +396,7 @@ class MLX90640ThermalSource:
             import board
             import busio
         except ImportError as exc:
-            raise SourceUnavailable(
-                "adafruit-circuitpython-mlx90640 is not installed"
-            ) from exc
+            raise SourceUnavailable("adafruit-circuitpython-mlx90640 is not installed") from exc
         try:
             i2c = busio.I2C(board.SCL, board.SDA, frequency=self.i2c_frequency)
             self._sensor = adafruit_mlx90640.MLX90640(i2c)
@@ -455,8 +456,7 @@ class SensorSuite:
     @property
     def any_real(self) -> bool:
         return not all(
-            getattr(s, "simulated", True)
-            for s in (self.vibration, self.acoustic, self.thermal)
+            getattr(s, "simulated", True) for s in (self.vibration, self.acoustic, self.thermal)
         )
 
     def describe(self) -> str:
@@ -490,8 +490,7 @@ def build_sensor_suite(
                 sample_rate=config.sensors.sample_rate,
                 duration=float(config.sensors.measurement_duration),
                 scenarios={
-                    sid: s.get("vibration", (FaultType.NORMAL, 0.0))
-                    for sid, s in scenarios.items()
+                    sid: s.get("vibration", (FaultType.NORMAL, 0.0)) for sid, s in scenarios.items()
                 },
             ),
             acoustic=SimulatedAcousticSource(
@@ -514,7 +513,8 @@ def build_sensor_suite(
     sensor_type = config.sensors.sensor_type
     if sensor_type == "firmware" and rover is not None and hasattr(rover, "find_sensor"):
         vibration: SensorSource = FirmwareVibrationSource(
-            rover, duration=config.sensors.firmware_capture_seconds,
+            rover,
+            duration=config.sensors.firmware_capture_seconds,
         )
     elif sensor_type == "imu" and rover is not None:
         vibration = RoverIMUVibrationSource(
@@ -539,9 +539,7 @@ def build_sensor_suite(
             device=config.sensors.microphone_device or None,
         )
     else:
-        acoustic = UnavailableSource(
-            "acoustic", "[sensors].microphone_enabled is false"
-        )
+        acoustic = UnavailableSource("acoustic", "[sensors].microphone_enabled is false")
 
     thermal: SensorSource
     if config.sensors.thermal_camera == "mlx90640":

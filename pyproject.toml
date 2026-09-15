@@ -29,6 +29,14 @@ ignore = [
               # rendering stay identical to what the logs and DB already use
 ]
 
+[tool.ruff.format]
+exclude = [
+    # Copy-pasted by hand into the Sphero EDU editor and read as teaching
+    # material. Its column-aligned constant tables are deliberate, and the
+    # formatter flattens them.
+    "scripts/sphero_edu_patrol.py",
+]
+
 [tool.ruff.lint.per-file-ignores]
 # These scripts prepend the project root to sys.path before importing `src`,
 # which necessarily happens after the import block starts.

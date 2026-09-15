@@ -42,6 +42,5 @@ def create_rover(config, simulate: bool = False) -> RoverBackend:
         )
 
     raise ValueError(
-        f"unknown [rover].connection={connection!r}; "
-        "expected 'ble', 'uart', or 'serial'"
+        f"unknown [rover].connection={connection!r}; expected 'ble', 'uart', or 'serial'"
     )

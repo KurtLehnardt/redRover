@@ -20,9 +20,8 @@ jobs:
         run: pip install ruff
       - name: Lint
         run: ruff check .
-      # `ruff format --check` is deliberately not enforced yet: the tree has
-      # never been auto-formatted, and reformatting 36 files would bury real
-      # changes in whitespace. Run `ruff format .` as its own commit first.
+      - name: Format check
+        run: ruff format --check .
 
   test:
     runs-on: ubuntu-latest

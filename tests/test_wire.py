@@ -70,8 +70,14 @@ def test_every_golden_frame_re_encodes_identically(vectors):
 
 def test_golden_frames_cover_the_message_types_that_matter(vectors):
     seen = {case["type"] for case in vectors["frames"]}
-    for required in (MsgType.DRIVE, MsgType.SAMPLE, MsgType.DESCRIPTOR,
-                     MsgType.STATUS, MsgType.ACK, MsgType.HELLO_ACK):
+    for required in (
+        MsgType.DRIVE,
+        MsgType.SAMPLE,
+        MsgType.DESCRIPTOR,
+        MsgType.STATUS,
+        MsgType.ACK,
+        MsgType.HELLO_ACK,
+    ):
         assert int(required) in seen
 
 
@@ -129,6 +135,7 @@ def test_any_single_bit_flip_is_rejected(index):
 def test_frame_rejects_wrong_version():
     raw = bytes([wire.PROTOCOL_VERSION + 1, int(MsgType.PING), 0, 0])
     import struct
+
     payload = cobs_encode(raw + struct.pack("<H", crc16(raw)))
     with pytest.raises(ProtocolError, match="version"):
         Frame.decode(payload)
@@ -246,6 +253,7 @@ def test_drive_payload_uses_milliradians(vectors):
     assert payload.hex() == case["payload"]
 
     import struct
+
     assert struct.unpack("<hhh", payload) == (250, 1571, 0)
     with pytest.raises(struct.error):
         wire.drive_payload(0, 90000)  # millidegrees would not fit

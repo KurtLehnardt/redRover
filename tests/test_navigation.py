@@ -25,8 +25,8 @@ from src.rover.controller import (
 @pytest.mark.parametrize(
     "heading,expected",
     [
-        (0.0, (0.0, 1.0)),     # forward is +Y
-        (90.0, (1.0, 0.0)),    # right is +X
+        (0.0, (0.0, 1.0)),  # forward is +Y
+        (90.0, (1.0, 0.0)),  # right is +X
         (180.0, (0.0, -1.0)),
         (270.0, (-1.0, 0.0)),
     ],
@@ -69,8 +69,7 @@ def test_travel_time_scales_with_speed():
 
 
 def test_travel_time_is_capped():
-    rover = RoverController(simulate=True, speed=0.1, max_speed_mps=0.1,
-                            max_drive_seconds=5.0)
+    rover = RoverController(simulate=True, speed=0.1, max_speed_mps=0.1, max_drive_seconds=5.0)
     assert rover.travel_time_for(1000.0) == 5.0
 
 
@@ -126,6 +125,7 @@ async def test_sensor_callbacks_are_retained():
     rover.inject_sensor_data(locator=(1.0, 2.0))
     # Let the scheduled callback task run.
     import asyncio
+
     await asyncio.sleep(0)
     await asyncio.sleep(0)
     assert seen and seen[0]["locator"] == (1.0, 2.0)

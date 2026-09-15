@@ -95,7 +95,8 @@ async def test_patrol_marks_simulated_rows(test_config):
     await db.init()
     try:
         history = await db.get_station_history(
-            test_config.route.waypoints[0].station_id, limit=5,
+            test_config.route.waypoints[0].station_id,
+            limit=5,
         )
         assert history
         assert history[0]["simulated"] == 1
@@ -111,9 +112,7 @@ async def test_patrol_syncs_stations_from_config(test_config):
     await db.init()
     try:
         stations = await db.get_stations()
-        assert {s["id"] for s in stations} == {
-            w.station_id for w in test_config.route.waypoints
-        }
+        assert {s["id"] for s in stations} == {w.station_id for w in test_config.route.waypoints}
     finally:
         await db.close()
 

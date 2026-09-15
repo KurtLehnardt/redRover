@@ -31,6 +31,7 @@ class VisualFaultType(str, Enum):
 @dataclass
 class GaugeReading:
     """Result of reading an analog gauge."""
+
     station_id: str
     gauge_id: str
     value: float
@@ -44,6 +45,7 @@ class GaugeReading:
 @dataclass
 class VisualInspection:
     """Result of visual inspection at a station."""
+
     station_id: str
     timestamp: float
     image_path: str | None

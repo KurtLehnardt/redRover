@@ -207,9 +207,7 @@ class FusionAnalyzer:
                 inference_mode="degraded",
             )
 
-        result.unobservable = sorted(
-            {band for mr in modality_results for band in mr.unobservable}
-        )
+        result.unobservable = sorted({band for mr in modality_results for band in mr.unobservable})
 
         duration = time.time() - start
         attrs = {"station.id": station_id, "inference.mode": result.inference_mode}
@@ -230,9 +228,7 @@ class FusionAnalyzer:
             modality_results=[r],
             correlated_faults=[r.code.value] if r.fault_detected else [],
             recommendation=(
-                f"Single-sensor detection: {r.code.value}"
-                if r.fault_detected
-                else "All clear"
+                f"Single-sensor detection: {r.code.value}" if r.fault_detected else "All clear"
             ),
             priority=HEALTH_TO_PRIORITY[health],
             reasoning=f"Based on {r.modality} only",
@@ -258,8 +254,7 @@ class FusionAnalyzer:
         bearing_ok = bool(features.get("bearing_analysis_available"))
 
         unobservable = [
-            key for key, value in features.items()
-            if key.startswith("energy_") and value is None
+            key for key, value in features.items() if key.startswith("energy_") and value is None
         ]
         partial = list(features.get("partial_bands", []))
         if not bearing_ok:
@@ -271,8 +266,14 @@ class FusionAnalyzer:
                 # Impulsive energy is real, but at this sample rate it cannot be
                 # attributed to a bearing.  Report what was actually observed.
                 return ModalityResult(
-                    "vibration", True, FaultCode.LOOSENESS.value, 0.50, "incipient",
-                    details=features, unobservable=unobservable, partial=partial,
+                    "vibration",
+                    True,
+                    FaultCode.LOOSENESS.value,
+                    0.50,
+                    "incipient",
+                    details=features,
+                    unobservable=unobservable,
+                    partial=partial,
                 )
             if kurtosis > 6:
                 severity, confidence = "severe", 0.90
@@ -281,32 +282,62 @@ class FusionAnalyzer:
             else:
                 severity, confidence = "incipient", 0.70
             return ModalityResult(
-                "vibration", True, FaultCode.BEARING_FAULT.value, confidence, severity,
-                details=features, unobservable=unobservable, partial=partial,
+                "vibration",
+                True,
+                FaultCode.BEARING_FAULT.value,
+                confidence,
+                severity,
+                details=features,
+                unobservable=unobservable,
+                partial=partial,
             )
 
         if low_energy is not None and low_energy > 0.5 and dominant < 100:
             if low_energy > 1.0:
                 return ModalityResult(
-                    "vibration", True, FaultCode.MISALIGNMENT.value, 0.70, "moderate",
-                    details=features, unobservable=unobservable, partial=partial,
+                    "vibration",
+                    True,
+                    FaultCode.MISALIGNMENT.value,
+                    0.70,
+                    "moderate",
+                    details=features,
+                    unobservable=unobservable,
+                    partial=partial,
                 )
             return ModalityResult(
-                "vibration", True, FaultCode.IMBALANCE.value, 0.65, "incipient",
-                details=features, unobservable=unobservable, partial=partial,
+                "vibration",
+                True,
+                FaultCode.IMBALANCE.value,
+                0.65,
+                "incipient",
+                details=features,
+                unobservable=unobservable,
+                partial=partial,
             )
 
         if rms > 1.5:
             return ModalityResult(
-                "vibration", True, FaultCode.LOOSENESS.value, 0.60, "moderate",
-                details=features, unobservable=unobservable, partial=partial,
+                "vibration",
+                True,
+                FaultCode.LOOSENESS.value,
+                0.60,
+                "moderate",
+                details=features,
+                unobservable=unobservable,
+                partial=partial,
             )
 
         # A clean result is only as confident as the bands we could see.
         confidence = 0.90 if bearing_ok else 0.60
         return ModalityResult(
-            "vibration", False, FaultCode.NORMAL.value, confidence, "none",
-            details=features, unobservable=unobservable, partial=partial,
+            "vibration",
+            False,
+            FaultCode.NORMAL.value,
+            confidence,
+            "none",
+            details=features,
+            unobservable=unobservable,
+            partial=partial,
         )
 
     def _analyze_acoustic(self, sample: AcousticSample) -> ModalityResult:
@@ -317,8 +348,7 @@ class FusionAnalyzer:
         audible_high = self._num(features, "acoustic_audible_high")
 
         unobservable = [
-            key for key, value in features.items()
-            if key.startswith("acoustic_") and value is None
+            key for key, value in features.items() if key.startswith("acoustic_") and value is None
         ]
         partial = list(features.get("partial_bands", []))
         if ultrasonic is None:
@@ -327,31 +357,61 @@ class FusionAnalyzer:
         if ultrasonic is not None:
             if ultrasonic > 0.05:
                 return ModalityResult(
-                    "acoustic", True, FaultCode.AIR_LEAK.value, 0.80, "moderate",
-                    details=features, unobservable=unobservable, partial=partial,
+                    "acoustic",
+                    True,
+                    FaultCode.AIR_LEAK.value,
+                    0.80,
+                    "moderate",
+                    details=features,
+                    unobservable=unobservable,
+                    partial=partial,
                 )
             if ultrasonic > 0.02:
                 return ModalityResult(
-                    "acoustic", True, FaultCode.AIR_LEAK.value, 0.60, "incipient",
-                    details=features, unobservable=unobservable, partial=partial,
+                    "acoustic",
+                    True,
+                    FaultCode.AIR_LEAK.value,
+                    0.60,
+                    "incipient",
+                    details=features,
+                    unobservable=unobservable,
+                    partial=partial,
                 )
 
         if rms_variance > 0.01:
             return ModalityResult(
-                "acoustic", True, FaultCode.ELECTRICAL_ARCING.value, 0.70, "moderate",
-                details=features, unobservable=unobservable, partial=partial,
+                "acoustic",
+                True,
+                FaultCode.ELECTRICAL_ARCING.value,
+                0.70,
+                "moderate",
+                details=features,
+                unobservable=unobservable,
+                partial=partial,
             )
 
         if audible_high is not None and audible_high > 0.001:
             return ModalityResult(
-                "acoustic", True, FaultCode.METAL_FRICTION.value, 0.55, "incipient",
-                details=features, unobservable=unobservable, partial=partial,
+                "acoustic",
+                True,
+                FaultCode.METAL_FRICTION.value,
+                0.55,
+                "incipient",
+                details=features,
+                unobservable=unobservable,
+                partial=partial,
             )
 
         confidence = 0.85 if ultrasonic is not None else 0.55
         return ModalityResult(
-            "acoustic", False, FaultCode.NORMAL.value, confidence, "none",
-            details=features, unobservable=unobservable, partial=partial,
+            "acoustic",
+            False,
+            FaultCode.NORMAL.value,
+            confidence,
+            "none",
+            details=features,
+            unobservable=unobservable,
+            partial=partial,
         )
 
     def _analyze_thermal(self, frame: ThermalFrame) -> ModalityResult:
@@ -361,16 +421,29 @@ class FusionAnalyzer:
 
         if fault_type == ThermalFaultType.OVERHEATING:
             return ModalityResult(
-                "thermal", True, FaultCode.OVERHEATING.value, 0.90, severity,
+                "thermal",
+                True,
+                FaultCode.OVERHEATING.value,
+                0.90,
+                severity,
                 details=features,
             )
         if fault_type == ThermalFaultType.HOTSPOT:
             return ModalityResult(
-                "thermal", True, FaultCode.HOTSPOT.value, 0.75, severity,
+                "thermal",
+                True,
+                FaultCode.HOTSPOT.value,
+                0.75,
+                severity,
                 details=features,
             )
         return ModalityResult(
-            "thermal", False, FaultCode.NORMAL.value, 0.85, "none", details=features,
+            "thermal",
+            False,
+            FaultCode.NORMAL.value,
+            0.85,
+            "none",
+            details=features,
         )
 
     # -- fusion -------------------------------------------------------------
@@ -382,9 +455,7 @@ class FusionAnalyzer:
         station_history: list[dict] | None = None,
     ) -> FusedDiagnosis:
         """Use the LLM to correlate cross-modal signals, falling back to rules."""
-        prompt = self._build_fusion_prompt(
-            station_id, results, station_history=station_history
-        )
+        prompt = self._build_fusion_prompt(station_id, results, station_history=station_history)
 
         try:
             data = await self._client.chat_json(FUSION_PROMPT, prompt)
@@ -424,7 +495,9 @@ class FusionAnalyzer:
         return seen
 
     def _rule_based_fusion(
-        self, station_id: str, results: list[ModalityResult],
+        self,
+        station_id: str,
+        results: list[ModalityResult],
     ) -> FusedDiagnosis:
         """Fallback fusion without LLM — pure rule-based correlation."""
         faults = [r for r in results if r.fault_detected]
@@ -483,7 +556,9 @@ class FusionAnalyzer:
         )
 
     def _apply_trend(
-        self, diagnosis: FusedDiagnosis, station_history: list[dict] | None,
+        self,
+        diagnosis: FusedDiagnosis,
+        station_history: list[dict] | None,
     ) -> FusedDiagnosis:
         """Escalate when the same canonical fault persists across patrols.
 
@@ -497,9 +572,7 @@ class FusionAnalyzer:
         current = {FaultCode.parse(f) for f in diagnosis.correlated_faults}
         recent = station_history[-3:]
         historical = {
-            FaultCode.parse(row.get("fault_type"))
-            for row in recent
-            if row.get("fault_type")
+            FaultCode.parse(row.get("fault_type")) for row in recent if row.get("fault_type")
         }
         historical.discard(FaultCode.NORMAL)
         historical.discard(FaultCode.UNKNOWN)
@@ -526,12 +599,16 @@ class FusionAnalyzer:
         codes = {r.code for r in faults}
         if FaultCode.BEARING_FAULT in codes:
             if any(r.modality == "thermal" and r.fault_detected for r in faults):
-                return ("URGENT: Bearing failure with thermal confirmation. "
-                        "Schedule immediate replacement.")
+                return (
+                    "URGENT: Bearing failure with thermal confirmation. "
+                    "Schedule immediate replacement."
+                )
             return "Bearing wear detected. Schedule replacement within 2 weeks."
         if codes & {FaultCode.AIR_LEAK, FaultCode.GAS_LEAK}:
-            return ("Compressed air leak detected. Locate and seal — "
-                    "estimated $3K-8K/year energy waste.")
+            return (
+                "Compressed air leak detected. Locate and seal — "
+                "estimated $3K-8K/year energy waste."
+            )
         if FaultCode.ELECTRICAL_ARCING in codes:
             return "URGENT: Electrical arcing detected. De-energize and inspect immediately."
         if codes & {FaultCode.OVERHEATING, FaultCode.HOTSPOT}:
@@ -561,8 +638,7 @@ class FusionAnalyzer:
         lines = [f"Station: {station_id}\n\nSensor Readings:"]
         for r in results:
             status = (
-                f"FAULT: {r.code.value} (severity: {r.severity}, "
-                f"confidence: {r.confidence:.0%})"
+                f"FAULT: {r.code.value} (severity: {r.severity}, confidence: {r.confidence:.0%})"
                 if r.fault_detected
                 else "NORMAL"
             )
@@ -575,9 +651,7 @@ class FusionAnalyzer:
                 else:
                     lines.append(f"  {key}: {val}")
             if r.unobservable:
-                lines.append(
-                    f"  NOT MEASURED: {', '.join(sorted(set(r.unobservable)))}"
-                )
+                lines.append(f"  NOT MEASURED: {', '.join(sorted(set(r.unobservable)))}")
             if r.partial:
                 lines.append(
                     f"  PARTIALLY MEASURED (value under-reports): "

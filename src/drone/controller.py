@@ -37,12 +37,12 @@ BATTERY_CACHE_SECONDS = 2.0
 
 
 class DroneState(str, Enum):
-    DOCKED = "docked"          # On RVR+ cradle
-    LAUNCHING = "launching"    # Taking off from cradle
-    FLYING = "flying"          # In autonomous flight
+    DOCKED = "docked"  # On RVR+ cradle
+    LAUNCHING = "launching"  # Taking off from cradle
+    FLYING = "flying"  # In autonomous flight
     INSPECTING = "inspecting"  # Hovering at target, capturing data
-    RETURNING = "returning"    # Flying back to RVR+
-    LANDING = "landing"        # Precision landing on cradle
+    RETURNING = "returning"  # Flying back to RVR+
+    LANDING = "landing"  # Precision landing on cradle
     ERROR = "error"
     LOW_BATTERY = "low_battery"
 
@@ -56,6 +56,7 @@ class DroneType(str, Enum):
 @dataclass
 class InspectionTarget:
     """A point in 3D space the drone should inspect."""
+
     target_id: str
     name: str
     x: float  # metres relative to launch point
@@ -164,9 +165,7 @@ class DroneController:
         try:
             from djitellopy import Tello
         except ImportError as exc:
-            raise RuntimeError(
-                "djitellopy not installed. Run: pip install djitellopy"
-            ) from exc
+            raise RuntimeError("djitellopy not installed. Run: pip install djitellopy") from exc
 
         def _setup():
             tello = Tello()
@@ -183,7 +182,8 @@ class DroneController:
             self._battery_read_at = time.monotonic()
             logger.info(
                 "[DRONE] Tello connected (battery: %d%%, temp: %s C)",
-                self._battery, temperature,
+                self._battery,
+                temperature,
             )
         except Exception as e:
             logger.error("[DRONE] Tello connection failed: %s", e)
@@ -217,7 +217,8 @@ class DroneController:
         if not await self.is_flight_ready():
             logger.warning(
                 "[DRONE] Cannot launch: state=%s, battery=%d%%",
-                self.state.value, self._battery,
+                self.state.value,
+                self._battery,
             )
             return False
 
@@ -253,21 +254,22 @@ class DroneController:
         self._set_state(DroneState.FLYING)
         logger.info(
             "[DRONE] Flying to target: %s at (%.1f, %.1f, %.1f)m",
-            target.name, target.x, target.y, target.z,
+            target.name,
+            target.x,
+            target.y,
+            target.z,
         )
 
         if self.drone_type is DroneType.SIMULATED:
             dx = target.x - self._position[0]
             dy = target.y - self._position[1]
             dz = target.z - self._position[2]
-            distance = (dx ** 2 + dy ** 2 + dz ** 2) ** 0.5
+            distance = (dx**2 + dy**2 + dz**2) ** 0.5
             await self._sim_sleep(min(distance / 1.0, 3.0))  # ~1 m/s cruise
             self._position = (target.x, target.y, target.z)
             self._altitude = target.z
             self._battery -= max(2, int(distance))
-            logger.info(
-                "[DRONE] Arrived at target: %s (alt: %.1fm)", target.name, self._altitude
-            )
+            logger.info("[DRONE] Arrived at target: %s (alt: %.1fm)", target.name, self._altitude)
             return
 
         if self.drone_type is DroneType.TELLO:
@@ -275,7 +277,11 @@ class DroneController:
             dy_cm = int((target.y - self._position[1]) * 100)
             dz_cm = int((target.z - self._altitude) * 100)
             await asyncio.to_thread(
-                self._tello.go_xyz_speed, dx_cm, dy_cm, dz_cm, 30,
+                self._tello.go_xyz_speed,
+                dx_cm,
+                dy_cm,
+                dz_cm,
+                30,
             )
             self._altitude = target.z
             self._position = (target.x, target.y, target.z)
@@ -302,9 +308,7 @@ class DroneController:
             try:
                 for angle in target.capture_angles:
                     if angle:
-                        await asyncio.to_thread(
-                            self._tello.rotate_clockwise, int(angle)
-                        )
+                        await asyncio.to_thread(self._tello.rotate_clockwise, int(angle))
                         await asyncio.sleep(1.0)
                     path = await asyncio.to_thread(self._capture_frame, target, angle)
                     if path:
@@ -394,11 +398,14 @@ class DroneController:
         if self.landing_mode in ("aruco", "mission_pad"):
             pad_id = await asyncio.to_thread(self._tello.get_mission_pad_id)
             if pad_id != -1:
-                logger.info(
-                    "[DRONE] Mission pad detected (ID: %d), precision landing...", pad_id
-                )
+                logger.info("[DRONE] Mission pad detected (ID: %d), precision landing...", pad_id)
                 await asyncio.to_thread(
-                    self._tello.go_xyz_speed_mid, 0, 0, 40, 20, pad_id,
+                    self._tello.go_xyz_speed_mid,
+                    0,
+                    0,
+                    40,
+                    20,
+                    pad_id,
                 )
                 await asyncio.sleep(2.0)
 

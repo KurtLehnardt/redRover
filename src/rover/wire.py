@@ -198,9 +198,10 @@ class Frame:
         """Serialise to the wire, COBS-encoded with a trailing delimiter."""
         if len(self.payload) > 255:
             raise ProtocolError(f"payload of {len(self.payload)} bytes exceeds 255")
-        body = bytes(
-            [PROTOCOL_VERSION, int(self.type), self.seq & 0xFF, len(self.payload)]
-        ) + self.payload
+        body = (
+            bytes([PROTOCOL_VERSION, int(self.type), self.seq & 0xFF, len(self.payload)])
+            + self.payload
+        )
         raw = body + struct.pack("<H", crc16(body))
         return cobs_encode(raw) + bytes([DELIMITER])
 
@@ -324,7 +325,7 @@ class SensorDescriptor:
     @property
     def scale(self) -> float:
         """Multiply a raw integer value by this to get the physical value."""
-        return 10.0 ** self.scale_exp
+        return 10.0**self.scale_exp
 
     def to_physical(self, raw: int) -> float:
         return raw * self.scale

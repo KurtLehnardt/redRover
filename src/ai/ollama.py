@@ -89,8 +89,9 @@ class OllamaClient:
         present = any(n == self.model or n.startswith(f"{self.model}:") for n in names)
         return present, names
 
-    async def chat(self, system: str, user: str, num_predict: int = 1000,
-                   temperature: float = 0.1) -> str:
+    async def chat(
+        self, system: str, user: str, num_predict: int = 1000, temperature: float = 0.1
+    ) -> str:
         """Run a single-turn chat completion and return the assistant text."""
         client = await self._get_client()
         try:
@@ -121,12 +122,11 @@ class OllamaClient:
         try:
             return json.loads(extract_json(raw))
         except json.JSONDecodeError as exc:
-            raise OllamaUnavailable(
-                f"model returned unparseable JSON: {raw[:200]!r}"
-            ) from exc
+            raise OllamaUnavailable(f"model returned unparseable JSON: {raw[:200]!r}") from exc
 
-    async def vision_json(self, prompt: str, image_b64: str,
-                          num_predict: int = 300) -> dict[str, Any]:
+    async def vision_json(
+        self, prompt: str, image_b64: str, num_predict: int = 300
+    ) -> dict[str, Any]:
         """Run a vision prompt against an image and parse the JSON response."""
         client = await self._get_client()
         try:
@@ -148,6 +148,4 @@ class OllamaClient:
         try:
             return json.loads(extract_json(raw))
         except json.JSONDecodeError as exc:
-            raise OllamaUnavailable(
-                f"model returned unparseable JSON: {raw[:200]!r}"
-            ) from exc
+            raise OllamaUnavailable(f"model returned unparseable JSON: {raw[:200]!r}") from exc

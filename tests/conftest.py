@@ -95,10 +95,13 @@ def stub_llm(monkeypatch):
         def test_x(stub_llm):
             stub_llm({"overall_health": "critical", ...})
     """
+
     def _install(payload: dict):
         async def _chat_json(self, *args, **kwargs):
             return payload
+
         monkeypatch.setattr(OllamaClient, "chat_json", _chat_json)
+
     return _install
 
 

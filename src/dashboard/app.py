@@ -109,12 +109,18 @@ class MappingSession:
 
     async def _run(self, speed: int, duration: float, room_bounds: float, simulate: bool):
         grid = OccupancyGrid(
-            width_m=room_bounds * 2, height_m=room_bounds * 2, cell_cm=5,
+            width_m=room_bounds * 2,
+            height_m=room_bounds * 2,
+            cell_cm=5,
         )
         rover = create_rover(config, simulate=simulate)
         explorer = RoomExplorer(
-            rover=rover, grid=grid, speed=speed, duration=duration,
-            room_bounds_m=room_bounds, simulate=simulate,
+            rover=rover,
+            grid=grid,
+            speed=speed,
+            duration=duration,
+            room_bounds_m=room_bounds,
+            simulate=simulate,
             robot_radius_m=config.rover.robot_radius_m,
         )
         self._rover, self._explorer = rover, explorer
@@ -127,7 +133,9 @@ class MappingSession:
             self.status = "complete"
             logger.info(
                 "Remap complete: %d free, %d wall, %.1f%% coverage",
-                stats["free"], stats["wall"], stats["coverage_pct"],
+                stats["free"],
+                stats["wall"],
+                stats["coverage_pct"],
             )
         except asyncio.CancelledError:
             self.status = "stopped"
@@ -187,6 +195,7 @@ app.add_middleware(
 
 try:
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
     FastAPIInstrumentor.instrument_app(app)
 except ImportError:
     pass
@@ -234,7 +243,8 @@ async def require_token(request: Request) -> None:
         )
     if not is_authenticated(request):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing token",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing token",
         )
 
 
@@ -247,15 +257,19 @@ async def require_token(request: Request) -> None:
 async def index(request: Request):
     patrols = await db.get_recent_patrols(10)
     faults = await db.get_active_faults()
-    return templates.TemplateResponse(request, "index.html", context={
-        "patrols": patrols,
-        "faults": faults,
-        "now": datetime.now(UTC).isoformat(),
-        # The page renders its own controls from these, so the button it shows
-        # is always one the API will actually accept.
-        "control_enabled": bool(config.dashboard.auth_token),
-        "authenticated": is_authenticated(request),
-    })
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        context={
+            "patrols": patrols,
+            "faults": faults,
+            "now": datetime.now(UTC).isoformat(),
+            # The page renders its own controls from these, so the button it shows
+            # is always one the API will actually accept.
+            "control_enabled": bool(config.dashboard.auth_token),
+            "authenticated": is_authenticated(request),
+        },
+    )
 
 
 @app.post("/api/session")
@@ -280,7 +294,8 @@ async def create_session(request: Request):
 
     if not supplied or not secrets.compare_digest(supplied, expected):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
         )
 
     response = JSONResponse({"status": "unlocked"})
@@ -307,10 +322,14 @@ async def destroy_session():
 @app.get("/station/{station_id}", response_class=HTMLResponse)
 async def station_detail(request: Request, station_id: str):
     history = await db.get_station_history(station_id, 50)
-    return templates.TemplateResponse(request, "station.html", context={
-        "station_id": station_id,
-        "history": history,
-    })
+    return templates.TemplateResponse(
+        request,
+        "station.html",
+        context={
+            "station_id": station_id,
+            "history": history,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -346,10 +365,12 @@ async def prometheus_metrics():
     try:
         from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
         from starlette.responses import Response
+
         return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
     except ImportError:
         return JSONResponse(
-            {"error": "prometheus_client not installed"}, status_code=501,
+            {"error": "prometheus_client not installed"},
+            status_code=501,
         )
 
 
@@ -418,18 +439,23 @@ def _load_map_stats() -> dict:
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("map stats unreadable: %s", exc)
     return {
-        "free": 0, "wall": 0, "unknown": 0,
-        "coverage_pct": 0.0, "area_free_m2": 0.0,
-        "timestamp": None, "status": "no_map",
+        "free": 0,
+        "wall": 0,
+        "unknown": 0,
+        "coverage_pct": 0.0,
+        "area_free_m2": 0.0,
+        "timestamp": None,
+        "status": "no_map",
     }
 
 
 try:
     from prometheus_client import Gauge
-    _g_free = Gauge('redrover_map_free_cells', 'Free cells in room map')
-    _g_wall = Gauge('redrover_map_wall_cells', 'Wall cells in room map')
-    _g_coverage = Gauge('redrover_map_coverage_pct', 'Map coverage percentage')
-    _g_area = Gauge('redrover_map_area_explored_m2', 'Explored area in square metres')
+
+    _g_free = Gauge("redrover_map_free_cells", "Free cells in room map")
+    _g_wall = Gauge("redrover_map_wall_cells", "Wall cells in room map")
+    _g_coverage = Gauge("redrover_map_coverage_pct", "Map coverage percentage")
+    _g_area = Gauge("redrover_map_area_explored_m2", "Explored area in square metres")
     _prometheus_map_gauges = True
 except ImportError:
     _prometheus_map_gauges = False
@@ -438,14 +464,13 @@ except ImportError:
 def _update_prometheus_map_metrics(stats: dict) -> None:
     if not _prometheus_map_gauges:
         return
-    _g_free.set(stats.get('free', 0))
-    _g_wall.set(stats.get('wall', 0))
-    _g_coverage.set(stats.get('coverage_pct', 0.0))
-    _g_area.set(stats.get('area_free_m2', 0.0))
+    _g_free.set(stats.get("free", 0))
+    _g_wall.set(stats.get("wall", 0))
+    _g_coverage.set(stats.get("coverage_pct", 0.0))
+    _g_area.set(stats.get("area_free_m2", 0.0))
 
 
-def _persist_map(grid: OccupancyGrid, speed: int, duration: float,
-                 room_bounds: float) -> dict:
+def _persist_map(grid: OccupancyGrid, speed: int, duration: float, room_bounds: float) -> dict:
     stats = grid.stats()
     title = (
         f"Room Map - {stats['free']} free, {stats['wall']} wall cells "
@@ -475,7 +500,8 @@ async def get_map_image():
             headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
         )
     return JSONResponse(
-        {"error": "No map available. Run a mapping session first."}, status_code=404,
+        {"error": "No map available. Run a mapping session first."},
+        status_code=404,
     )
 
 
@@ -507,7 +533,10 @@ async def trigger_remap(
     room_bounds = max(0.5, min(50.0, room_bounds))
 
     started = await mapping_session.start(
-        speed=speed, duration=duration, room_bounds=room_bounds, simulate=simulate,
+        speed=speed,
+        duration=duration,
+        room_bounds=room_bounds,
+        simulate=simulate,
     )
     if not started:
         return JSONResponse(
@@ -515,8 +544,10 @@ async def trigger_remap(
             status_code=409,
         )
     return {
-        "status": "started", "speed": speed,
-        "duration": duration, "room_bounds": room_bounds,
+        "status": "started",
+        "speed": speed,
+        "duration": duration,
+        "room_bounds": room_bounds,
     }
 
 
@@ -555,6 +586,7 @@ async def trigger_demo_patrol():
 def start():
     """Entry point for running the dashboard."""
     import uvicorn
+
     uvicorn.run(
         "src.dashboard.app:app",
         host=config.dashboard.host,

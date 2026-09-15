@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DeploymentResult:
     """Result of a drone deployment."""
+
     mission_id: str
     station_id: str
     success: bool
@@ -97,7 +98,8 @@ class DroneRoverOrchestrator:
         if mission.estimated_duration > self.max_mission_duration:
             logger.warning(
                 "[ORCH] Mission too long (%.0fs > %.0fs limit)",
-                mission.estimated_duration, self.max_mission_duration,
+                mission.estimated_duration,
+                self.max_mission_duration,
             )
             return None
 
@@ -109,8 +111,9 @@ class DroneRoverOrchestrator:
         logger.info("  +-- DRONE DEPLOYMENT -------------------------------")
         logger.info("  |  Type:    %s", mission.mission_type.value)
         logger.info("  |  Station: %s", mission.station_id)
-        logger.info("  |  Targets: %d  (est. %.0fs)",
-                    mission.total_targets, mission.estimated_duration)
+        logger.info(
+            "  |  Targets: %d  (est. %.0fs)", mission.total_targets, mission.estimated_duration
+        )
         logger.info("  |  Reason:  %s", mission.reason)
         logger.info("  +---------------------------------------------------")
 
@@ -122,27 +125,25 @@ class DroneRoverOrchestrator:
         try:
             logger.info("  [ORCH] Phase 1: launch from cradle")
             if not await self.drone.launch():
-                return self._record(DeploymentResult(
-                    mission_id=mission.mission_id,
-                    station_id=mission.station_id,
-                    success=False,
-                    captures=[],
-                    flight_duration=time.time() - start_time,
-                    battery_used=0,
-                    error="Launch failed",
-                ))
+                return self._record(
+                    DeploymentResult(
+                        mission_id=mission.mission_id,
+                        station_id=mission.station_id,
+                        success=False,
+                        captures=[],
+                        flight_duration=time.time() - start_time,
+                        battery_used=0,
+                        error="Launch failed",
+                    )
+                )
 
-            logger.info(
-                "  [ORCH] Phase 2: executing %d inspection targets", mission.total_targets
-            )
+            logger.info("  [ORCH] Phase 2: executing %d inspection targets", mission.total_targets)
             for i, target in enumerate(mission.targets):
                 battery = await self.drone.get_battery()
                 # Reserve enough charge for the return leg, not just a margin
                 # above zero.
                 if battery < self.min_deploy_battery // 2:
-                    logger.warning(
-                        "  [ORCH] Low battery (%d%%), aborting mission", battery
-                    )
+                    logger.warning("  [ORCH] Low battery (%d%%), aborting mission", battery)
                     error = "Low battery abort"
                     break
 
@@ -158,7 +159,10 @@ class DroneRoverOrchestrator:
 
                 logger.info(
                     "  [ORCH]   Target %d/%d complete: %s (%d images)",
-                    i + 1, mission.total_targets, target.name, len(capture.images),
+                    i + 1,
+                    mission.total_targets,
+                    target.name,
+                    len(capture.images),
                 )
 
             logger.info("  [ORCH] Phase 3: return to cradle")
@@ -175,20 +179,23 @@ class DroneRoverOrchestrator:
         flight_duration = time.time() - start_time
         battery_used = max(0, start_battery - await self.drone.get_battery())
 
-        result = self._record(DeploymentResult(
-            mission_id=mission.mission_id,
-            station_id=mission.station_id,
-            success=error is None,
-            captures=captures,
-            flight_duration=flight_duration,
-            battery_used=battery_used,
-            error=error,
-        ))
+        result = self._record(
+            DeploymentResult(
+                mission_id=mission.mission_id,
+                station_id=mission.station_id,
+                success=error is None,
+                captures=captures,
+                flight_duration=flight_duration,
+                battery_used=battery_used,
+                error=error,
+            )
+        )
 
         logger.info(
             "  [ORCH] Deployment complete: %s | Duration: %.1fs | Battery used: %d%%",
             "SUCCESS" if result.success else f"FAILED ({error})",
-            flight_duration, battery_used,
+            flight_duration,
+            battery_used,
         )
         return result
 
@@ -203,9 +210,7 @@ class DroneRoverOrchestrator:
             logger.warning("[ORCH] No mission template for fault: %s", fault_type)
             return None
         _, generator = entry
-        return generator(
-            station_id=station_id, reason=f"Ground sensors detected: {fault_type}"
-        )
+        return generator(station_id=station_id, reason=f"Ground sensors detected: {fault_type}")
 
     @property
     def deployments(self) -> list[DeploymentResult]:

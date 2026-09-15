@@ -130,9 +130,7 @@ _SEVERITY_ORDER = {"none": 0, "incipient": 1, "moderate": 2, "severe": 3, "criti
 
 
 def _worst_severity(diagnosis) -> str:
-    severities = [
-        mr.severity for mr in diagnosis.modality_results if mr.fault_detected
-    ]
+    severities = [mr.severity for mr in diagnosis.modality_results if mr.fault_detected]
     if not severities:
         return "none"
     return max(severities, key=lambda s: _SEVERITY_ORDER.get(s, 0))
@@ -224,13 +222,16 @@ class Database:
         return cursor.lastrowid
 
     async def complete_patrol(
-        self, patrol_id: int, completed_at: str, stations: int, faults: int,
+        self,
+        patrol_id: int,
+        completed_at: str,
+        stations: int,
+        faults: int,
     ) -> None:
         start = time.time()
         conn = await self._connect()
         await conn.execute(
-            "UPDATE patrols SET completed_at=?, stations_visited=?, faults_detected=? "
-            "WHERE id=?",
+            "UPDATE patrols SET completed_at=?, stations_visited=?, faults_detected=? WHERE id=?",
             (completed_at, stations, faults, patrol_id),
         )
         await conn.commit()
@@ -238,9 +239,7 @@ class Database:
 
     async def get_recent_patrols(self, limit: int = 20) -> list[dict]:
         conn = await self._connect()
-        cursor = await conn.execute(
-            "SELECT * FROM patrols ORDER BY id DESC LIMIT ?", (limit,)
-        )
+        cursor = await conn.execute("SELECT * FROM patrols ORDER BY id DESC LIMIT ?", (limit,))
         return [dict(r) for r in await cursor.fetchall()]
 
     # -- measurements -------------------------------------------------------
@@ -264,12 +263,18 @@ class Database:
                 source_name, simulated)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                patrol_id, station_id, measured_at,
-                features.get("rms"), features.get("peak"),
-                features.get("crest_factor"), features.get("kurtosis"),
+                patrol_id,
+                station_id,
+                measured_at,
+                features.get("rms"),
+                features.get("peak"),
+                features.get("crest_factor"),
+                features.get("kurtosis"),
                 features.get("dominant_frequency_hz"),
-                features.get("energy_0_100hz"), features.get("energy_100_500hz"),
-                features.get("energy_500_1000hz"), features.get("energy_1000_2000hz"),
+                features.get("energy_0_100hz"),
+                features.get("energy_100_500hz"),
+                features.get("energy_500_1000hz"),
+                features.get("energy_1000_2000hz"),
                 features.get("sample_rate_hz"),
                 int(bool(features.get("bearing_analysis_available"))),
                 source_name,
@@ -296,8 +301,7 @@ class Database:
         """
         if not isinstance(diagnosis, DiagnosisRecord):
             raise TypeError(
-                "log_diagnosis expects a DiagnosisRecord; "
-                "use DiagnosisRecord.from_fused(diagnosis)"
+                "log_diagnosis expects a DiagnosisRecord; use DiagnosisRecord.from_fused(diagnosis)"
             )
         start = time.time()
         conn = await self._connect()
@@ -308,10 +312,17 @@ class Database:
                 inference_mode, correlation_tags, simulated)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                measurement_id, station_id, diagnosis.fault_type,
-                diagnosis.confidence, diagnosis.severity,
-                diagnosis.recommendation, diagnosis.reasoning, diagnosed_at,
-                diagnosis.health, diagnosis.priority, diagnosis.inference_mode,
+                measurement_id,
+                station_id,
+                diagnosis.fault_type,
+                diagnosis.confidence,
+                diagnosis.severity,
+                diagnosis.recommendation,
+                diagnosis.reasoning,
+                diagnosed_at,
+                diagnosis.health,
+                diagnosis.priority,
+                diagnosis.inference_mode,
                 ",".join(diagnosis.correlation_tags),
                 int(bool(diagnosis.simulated)),
             ),

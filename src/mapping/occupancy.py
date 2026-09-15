@@ -124,7 +124,11 @@ class OccupancyGrid:
                 r += step_r
 
     def mark_obstacle_ahead(
-        self, x_m: float, y_m: float, heading_deg: float, standoff_m: float,
+        self,
+        x_m: float,
+        y_m: float,
+        heading_deg: float,
+        standoff_m: float,
     ) -> tuple[float, float]:
         """Mark a wall ``standoff_m`` ahead of the robot along ``heading_deg``.
 
@@ -143,8 +147,12 @@ class OccupancyGrid:
         return wall_x, wall_y
 
     def count_unknown_along(
-        self, x_m: float, y_m: float, heading_deg: float,
-        max_range_m: float = 1.0, step_m: float = 0.1,
+        self,
+        x_m: float,
+        y_m: float,
+        heading_deg: float,
+        max_range_m: float = 1.0,
+        step_m: float = 0.1,
     ) -> int:
         """Number of unknown cells sampled along a heading — frontier score."""
         from ..rover.controller import heading_to_vector
@@ -172,12 +180,12 @@ class OccupancyGrid:
         free = int(np.sum(self.grid == CELL_FREE))
         wall = int(np.sum(self.grid == CELL_WALL))
         return {
-            'total_cells': total,
-            'free': free,
-            'wall': wall,
-            'unknown': total - free - wall,
-            'coverage_pct': (free + wall) / total * 100 if total else 0.0,
-            'area_free_m2': free * (self.cell_cm / 100.0) ** 2,
+            "total_cells": total,
+            "free": free,
+            "wall": wall,
+            "unknown": total - free - wall,
+            "coverage_pct": (free + wall) / total * 100 if total else 0.0,
+            "area_free_m2": free * (self.cell_cm / 100.0) ** 2,
         }
 
     # -- visualisation ------------------------------------------------------
@@ -186,40 +194,40 @@ class OccupancyGrid:
         """Render the occupancy grid to a PNG image using matplotlib."""
         try:
             import matplotlib
-            matplotlib.use('Agg')
+
+            matplotlib.use("Agg")
             import matplotlib.pyplot as plt
             from matplotlib.colors import ListedColormap
         except ImportError as exc:
             raise RuntimeError(
-                "matplotlib is required to save a map image "
-                "(pip install matplotlib)"
+                "matplotlib is required to save a map image (pip install matplotlib)"
             ) from exc
 
         fig, ax = plt.subplots(figsize=(10, 10))
 
-        cmap = ListedColormap(['#C0C0C0', '#FFFFFF', '#000000'])
+        cmap = ListedColormap(["#C0C0C0", "#FFFFFF", "#000000"])
         extent = [
             -self.origin_col * self.cell_cm / 100.0,
             (self.cols - self.origin_col) * self.cell_cm / 100.0,
             -self.origin_row * self.cell_cm / 100.0,
             (self.rows - self.origin_row) * self.cell_cm / 100.0,
         ]
-        ax.imshow(self.grid, cmap=cmap, vmin=0, vmax=2, origin='upper', extent=extent)
+        ax.imshow(self.grid, cmap=cmap, vmin=0, vmax=2, origin="upper", extent=extent)
 
         if len(self.path) > 1:
             xs = [p[0] for p in self.path]
             ys = [p[1] for p in self.path]
-            ax.plot(xs, ys, 'b-', linewidth=0.8, alpha=0.6, label='Path')
+            ax.plot(xs, ys, "b-", linewidth=0.8, alpha=0.6, label="Path")
 
-        ax.plot(0, 0, 'go', markersize=10, label='Start', zorder=5)
-        ax.set_xlabel('X (metres)')
-        ax.set_ylabel('Y (metres)')
+        ax.plot(0, 0, "go", markersize=10, label="Start", zorder=5)
+        ax.set_xlabel("X (metres)")
+        ax.set_ylabel("Y (metres)")
         ax.set_title(title)
-        ax.legend(loc='upper right')
-        ax.set_aspect('equal')
+        ax.legend(loc="upper right")
+        ax.set_aspect("equal")
         ax.grid(True, alpha=0.2)
 
-        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-        fig.savefig(path, dpi=150, bbox_inches='tight')
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        fig.savefig(path, dpi=150, bbox_inches="tight")
         plt.close(fig)
         logger.info("Map saved to %s", path)

@@ -66,16 +66,15 @@ class SimulatedEnvironment:
         vy = 0.0 if hit_wall else self.speed_mps * uy
 
         return {
-            'locator': (self.x + self._rng.normal(0, 0.002),
-                        self.y + self._rng.normal(0, 0.002)),
-            'velocity': (vx, vy),
-            'accelerometer': (
+            "locator": (self.x + self._rng.normal(0, 0.002), self.y + self._rng.normal(0, 0.002)),
+            "velocity": (vx, vy),
+            "accelerometer": (
                 accel_mag * ux + self._rng.normal(0, 0.05),
                 accel_mag * uy + self._rng.normal(0, 0.05),
                 -1.0 + self._rng.normal(0, 0.02),
             ),
-            'gyroscope': tuple(self._rng.normal(0, 5.0, 3)),
-            'hit_wall': hit_wall,
+            "gyroscope": tuple(self._rng.normal(0, 5.0, 3)),
+            "hit_wall": hit_wall,
         }
 
 
@@ -112,7 +111,7 @@ class RoomExplorer:
 
     async def _on_sensor_data(self, data: dict) -> None:
         """Called by the rover's sensor streaming on each update."""
-        x, y = data.get('locator', (0.0, 0.0))
+        x, y = data.get("locator", (0.0, 0.0))
         self.grid.record_pose(x, y)
 
     # -- direction choosing (frontier-based) --------------------------------
@@ -138,6 +137,7 @@ class RoomExplorer:
     def heading_home(self, x: float, y: float) -> float:
         """Heading that points back toward the origin."""
         from ..rover.controller import vector_to_heading
+
         return vector_to_heading(-x, -y)
 
     # -- shared step logic ---------------------------------------------------
@@ -167,7 +167,13 @@ class RoomExplorer:
         s = self.grid.stats()
         logger.info(
             "[%6.1fs] pos=(%.2f,%.2f) heading=%.0f free=%d wall=%d coverage=%.1f%%",
-            now - start_time, x, y, self._heading, s['free'], s['wall'], s['coverage_pct'],
+            now - start_time,
+            x,
+            y,
+            self._heading,
+            s["free"],
+            s["wall"],
+            s["coverage_pct"],
         )
         self._last_status_time = now
 
@@ -200,9 +206,9 @@ class RoomExplorer:
         try:
             while self._running and (time.monotonic() - start_time) < self.duration:
                 sensor = self.rover.sensor_data
-                x, y = sensor.get('locator', (0.0, 0.0))
-                vx, vy = sensor.get('velocity', (0.0, 0.0))
-                ax, ay, az = sensor.get('accelerometer', (0.0, 0.0, 0.0))
+                x, y = sensor.get("locator", (0.0, 0.0))
+                vx, vy = sensor.get("velocity", (0.0, 0.0))
+                ax, ay, az = sensor.get("accelerometer", (0.0, 0.0, 0.0))
                 vel_mag = math.hypot(vx, vy)
                 accel_mag = math.sqrt(ax * ax + ay * ay + az * az)
 
@@ -212,15 +218,17 @@ class RoomExplorer:
                 if accel_mag > BUMP_THRESHOLD_G:
                     self._bump_samples += 1
                     if self._bump_samples >= BUMP_CONSECUTIVE_SAMPLES:
-                        logger.info(
-                            "BUMP detected (accel=%.2fg) at (%.2f, %.2f)", accel_mag, x, y
-                        )
+                        logger.info("BUMP detected (accel=%.2fg) at (%.2f, %.2f)", accel_mag, x, y)
                         obstacle = True
                 else:
                     self._bump_samples = 0
 
-                if not obstacle and elapsed_since_drive > DRIVE_GRACE_SECONDS \
-                        and self.speed > 0 and vel_mag < STALL_VELOCITY_MPS:
+                if (
+                    not obstacle
+                    and elapsed_since_drive > DRIVE_GRACE_SECONDS
+                    and self.speed > 0
+                    and vel_mag < STALL_VELOCITY_MPS
+                ):
                     if self._stall_start is None:
                         self._stall_start = time.monotonic()
                     elif time.monotonic() - self._stall_start > STALL_HOLD_SECONDS:
@@ -267,21 +275,23 @@ class RoomExplorer:
                 self._sim_env.set_drive(self.speed, self._heading)
                 sensor = self._sim_env.tick(dt)
 
-                x, y = sensor['locator']
-                vx, vy = sensor['velocity']
-                ax, ay, az = sensor['accelerometer']
+                x, y = sensor["locator"]
+                vx, vy = sensor["velocity"]
+                ax, ay, az = sensor["accelerometer"]
                 vel_mag = math.hypot(vx, vy)
                 accel_mag = math.sqrt(ax * ax + ay * ay + az * az)
 
                 # Feed the controller through its public API rather than
                 # writing to its private state.
                 self.rover.inject_sensor_data(
-                    locator=(x, y), velocity=(vx, vy),
-                    accelerometer=(ax, ay, az), gyroscope=sensor['gyroscope'],
+                    locator=(x, y),
+                    velocity=(vx, vy),
+                    accelerometer=(ax, ay, az),
+                    gyroscope=sensor["gyroscope"],
                 )
                 self.grid.record_pose(x, y)
 
-                obstacle = accel_mag > BUMP_THRESHOLD_G or sensor['hit_wall']
+                obstacle = accel_mag > BUMP_THRESHOLD_G or sensor["hit_wall"]
                 if not obstacle and self.speed > 0 and vel_mag < STALL_VELOCITY_MPS:
                     if self._stall_start is None:
                         self._stall_start = time.monotonic()

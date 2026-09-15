@@ -86,10 +86,15 @@ def test_extract_features_keys():
     sample = generate_sample(fault_type=FaultType.NORMAL)
     features = extract_features(sample)
     expected_keys = [
-        "rms", "peak", "crest_factor", "kurtosis",
+        "rms",
+        "peak",
+        "crest_factor",
+        "kurtosis",
         "dominant_frequency_hz",
-        "energy_0_100hz", "energy_100_500hz",
-        "energy_500_1000hz", "energy_1000_2000hz",
+        "energy_0_100hz",
+        "energy_100_500hz",
+        "energy_500_1000hz",
+        "energy_1000_2000hz",
     ]
     for key in expected_keys:
         assert key in features
@@ -122,9 +127,11 @@ def test_envelope_spectrum_shape():
 def test_envelope_spectrum_rejects_unusable_sample_rate():
     """A 1 kHz sample cannot carry the 1 kHz+ resonance band."""
     sample = VibrationSample(
-        station_id="M-1", timestamp=0.0,
+        station_id="M-1",
+        timestamp=0.0,
         raw_signal=np.zeros(1000, dtype=np.float32),
-        sample_rate=1000, duration=1.0,
+        sample_rate=1000,
+        duration=1.0,
     )
     assert sample.supports_bearing_analysis is False
     with pytest.raises(ValueError, match="envelope analysis needs"):
@@ -146,9 +153,11 @@ def test_envelope_energy_higher_for_bearing_fault():
 def test_envelope_energy_absent_when_not_measurable():
     """Missing is reported as an empty dict, not as zero energy."""
     sample = VibrationSample(
-        station_id="M-1", timestamp=0.0,
+        station_id="M-1",
+        timestamp=0.0,
         raw_signal=np.zeros(500, dtype=np.float32),
-        sample_rate=100, duration=5.0,
+        sample_rate=100,
+        duration=5.0,
     )
     assert envelope_defect_energy(sample) == {}
 
@@ -164,17 +173,24 @@ def test_bearing_defect_frequencies_scale_with_rpm():
 
 
 def test_each_generator_produces_the_requested_length():
-    for gen in (generate_normal, generate_misalignment, generate_imbalance,
-                generate_looseness):
+    for gen in (generate_normal, generate_misalignment, generate_imbalance, generate_looseness):
         signal = gen(sample_rate=2000, duration=1.0)
         assert len(signal) == 2000
 
 
 def test_bearing_generator_severity_increases_impulsiveness():
     mild = VibrationSample(
-        "M", 0.0, generate_bearing_fault(4000, 2.0, severity=0.2), 4000, 2.0,
+        "M",
+        0.0,
+        generate_bearing_fault(4000, 2.0, severity=0.2),
+        4000,
+        2.0,
     )
     severe = VibrationSample(
-        "M", 0.0, generate_bearing_fault(4000, 2.0, severity=0.9), 4000, 2.0,
+        "M",
+        0.0,
+        generate_bearing_fault(4000, 2.0, severity=0.9),
+        4000,
+        2.0,
     )
     assert severe.kurtosis > mild.kurtosis

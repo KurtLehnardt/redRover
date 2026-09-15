@@ -12,7 +12,9 @@ logger = logging.getLogger("redRover.scheduler")
 
 
 def _in_quiet_hours(
-    start_str: str, end_str: str, now: dt_time | None = None,
+    start_str: str,
+    end_str: str,
+    now: dt_time | None = None,
 ) -> bool:
     """Whether ``now`` falls inside the quiet-hours window.
 
@@ -54,7 +56,11 @@ async def run_scheduler(
     logger.info("redRover Scheduler Started")
     logger.info("  Patrol interval: %d minutes", config.scheduler.patrol_interval)
     if quiet_hours_only:
-        logger.info("  Quiet hours: %s - %s", config.scheduler.quiet_hours_start, config.scheduler.quiet_hours_end)
+        logger.info(
+            "  Quiet hours: %s - %s",
+            config.scheduler.quiet_hours_start,
+            config.scheduler.quiet_hours_end,
+        )
     logger.info("=" * 70)
 
     while True:
@@ -75,7 +81,13 @@ async def run_scheduler(
                 skip_ai=skip_ai,
                 enable_drone=enable_drone,
             )
-            n_faults = len([r for r in results if hasattr(r, 'overall_health') and r.overall_health.value != "healthy"])
+            n_faults = len(
+                [
+                    r
+                    for r in results
+                    if hasattr(r, "overall_health") and r.overall_health.value != "healthy"
+                ]
+            )
             logger.info("Patrol #%d complete — %d faults detected", patrol_count, n_faults)
         except Exception as e:
             logger.error("Patrol #%d failed: %s", patrol_count, e)
@@ -92,17 +104,22 @@ def main():
     parser.add_argument("--real", action="store_true")
     parser.add_argument("--skip-ai", action="store_true")
     parser.add_argument("--no-drone", action="store_true")
-    parser.add_argument("--quiet-hours-only", action="store_true",
-                        help="Only run patrols during configured quiet hours")
+    parser.add_argument(
+        "--quiet-hours-only",
+        action="store_true",
+        help="Only run patrols during configured quiet hours",
+    )
     args = parser.parse_args()
 
     try:
-        asyncio.run(run_scheduler(
-            simulate=not args.real,
-            skip_ai=args.skip_ai,
-            enable_drone=not args.no_drone,
-            quiet_hours_only=args.quiet_hours_only,
-        ))
+        asyncio.run(
+            run_scheduler(
+                simulate=not args.real,
+                skip_ai=args.skip_ai,
+                enable_drone=not args.no_drone,
+                quiet_hours_only=args.quiet_hours_only,
+            )
+        )
     except KeyboardInterrupt:
         logger.info("Scheduler stopped")
     finally:

@@ -20,10 +20,10 @@ from src.drone.precision_landing import MarkerDetection, PIDController, Precisio
 
 # === Controller Tests ===
 
+
 @pytest.mark.asyncio
 async def test_drone_connect_simulated(tmp_path):
-    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path,
-                             time_scale=0.0)
+    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path, time_scale=0.0)
     await drone.connect()
     assert drone.state == DroneState.DOCKED
     assert await drone.get_battery() == 100
@@ -34,8 +34,7 @@ async def test_drone_connect_simulated(tmp_path):
 
 @pytest.mark.asyncio
 async def test_drone_launch_and_land(tmp_path):
-    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path,
-                             time_scale=0.0)
+    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path, time_scale=0.0)
     await drone.connect()
 
     success = await drone.launch()
@@ -48,15 +47,16 @@ async def test_drone_launch_and_land(tmp_path):
 
 @pytest.mark.asyncio
 async def test_drone_inspect_target(tmp_path):
-    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path,
-                             time_scale=0.0)
+    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path, time_scale=0.0)
     await drone.connect()
     await drone.launch()
 
     target = InspectionTarget(
         target_id="TEST-001",
         name="Test pipe section",
-        x=1.0, y=0.5, z=2.0,
+        x=1.0,
+        y=0.5,
+        z=2.0,
         hover_duration=1.0,
         capture_angles=[0.0, 90.0],
     )
@@ -75,15 +75,17 @@ async def test_drone_inspect_target(tmp_path):
 
 @pytest.mark.asyncio
 async def test_drone_battery_decreases(tmp_path):
-    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path,
-                             time_scale=0.0)
+    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path, time_scale=0.0)
     await drone.connect()
     initial_battery = await drone.get_battery()
 
     await drone.launch()
     target = InspectionTarget(
-        target_id="T1", name="Far target",
-        x=3.0, y=3.0, z=2.5,
+        target_id="T1",
+        name="Far target",
+        x=3.0,
+        y=3.0,
+        z=2.5,
         hover_duration=1.0,
     )
     await drone.fly_to_target(target)
@@ -96,7 +98,9 @@ async def test_drone_battery_decreases(tmp_path):
 @pytest.mark.asyncio
 async def test_drone_wont_launch_low_battery(tmp_path):
     drone = DroneController(
-        drone_type=DroneType.SIMULATED, min_battery=20, capture_dir=tmp_path,
+        drone_type=DroneType.SIMULATED,
+        min_battery=20,
+        capture_dir=tmp_path,
         time_scale=0.0,
     )
     await drone.connect()
@@ -108,6 +112,7 @@ async def test_drone_wont_launch_low_battery(tmp_path):
 
 
 # === Mission Tests ===
+
 
 def test_overhead_pipe_mission():
     mission = generate_overhead_pipe_mission(
@@ -153,6 +158,7 @@ def test_mission_estimated_duration():
 
 # === Deployment Logic Tests ===
 
+
 def test_should_deploy_for_air_leak():
     assert should_deploy_drone("air_leak") is True
     assert should_deploy_drone("gas_leak") is True
@@ -169,6 +175,7 @@ def test_should_deploy_thermal_with_overhead():
 
 # === Orchestrator Tests ===
 
+
 @pytest.mark.asyncio
 async def test_orchestrator_refuses_while_rover_moving(tmp_path):
     """The rover is the landing pad; it must be stationary before launch."""
@@ -176,8 +183,7 @@ async def test_orchestrator_refuses_while_rover_moving(tmp_path):
     from src.rover.controller import RoverController, RoverState
 
     rover = RoverController(simulate=True)
-    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path,
-                             time_scale=0.0)
+    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path, time_scale=0.0)
     await drone.connect()
     orch = DroneRoverOrchestrator(rover=rover, drone=drone)
 
@@ -198,8 +204,7 @@ async def test_orchestrator_refuses_on_estop(tmp_path):
     rover = RoverController(simulate=True)
     rover.state = RoverState.DWELLING
     await rover.emergency_stop()
-    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path,
-                             time_scale=0.0)
+    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path, time_scale=0.0)
     await drone.connect()
     orch = DroneRoverOrchestrator(rover=rover, drone=drone)
 
@@ -214,8 +219,7 @@ async def test_orchestrator_deploys_for_air_leak(tmp_path):
 
     rover = RoverController(simulate=True)
     rover.state = RoverState.DWELLING
-    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path,
-                             time_scale=0.0)
+    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path, time_scale=0.0)
     await drone.connect()
     orch = DroneRoverOrchestrator(rover=rover, drone=drone, max_mission_duration=600.0)
 
@@ -226,6 +230,7 @@ async def test_orchestrator_deploys_for_air_leak(tmp_path):
 
 
 # === PID Controller Tests ===
+
 
 def test_pid_output_proportional():
     pid = PIDController(kp=1.0, ki=0.0, kd=0.0)
@@ -241,6 +246,7 @@ def test_pid_output_limits():
 
 def test_pid_converges():
     import time as _time
+
     pid = PIDController(kp=0.5, ki=0.01, kd=0.1, output_limit=100.0)
     error = 10.0
     for _ in range(100):
@@ -252,6 +258,7 @@ def test_pid_converges():
 
 
 # === Precision Landing Tests ===
+
 
 def test_landing_system_marker_detection():
     """Test that ArUco detection returns correct structure."""

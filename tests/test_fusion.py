@@ -21,6 +21,7 @@ ANALYZER = FusionAnalyzer(model="gemma3", ollama_host="http://localhost:99999")
 
 # === Fusion Rule-Based Logic ===
 
+
 @pytest.mark.asyncio
 async def test_fusion_all_normal():
     vib = generate_sample(fault_type=FaultType.NORMAL)
@@ -105,9 +106,7 @@ async def test_fusion_no_modalities():
 
 def test_fusion_inference_mode_rule_based():
     """Direct call to _rule_based_fusion should set inference_mode."""
-    vib_result = ANALYZER._analyze_vibration(
-        generate_sample(fault_type=FaultType.NORMAL)
-    )
+    vib_result = ANALYZER._analyze_vibration(generate_sample(fault_type=FaultType.NORMAL))
     thm_result = ANALYZER._analyze_thermal(
         generate_thermal_frame(fault_type=ThermalFaultType.NORMAL)
     )
@@ -137,22 +136,48 @@ async def test_fusion_recommendation_air_leak():
 
 # === Trend Escalation ===
 
+
 @pytest.mark.asyncio
 async def test_fusion_trend_escalation():
     """Persistent fault in history should escalate severity."""
     history = [
-        {"measured_at": "2026-07-17", "rms": 0.6, "peak": 1.4, "kurtosis": -0.1,
-         "crest_factor": 2.2, "fault_type": "hotspot", "severity": "moderate", "confidence": 0.75},
-        {"measured_at": "2026-07-18", "rms": 0.65, "peak": 1.5, "kurtosis": 0.0,
-         "crest_factor": 2.3, "fault_type": "hotspot", "severity": "moderate", "confidence": 0.78},
-        {"measured_at": "2026-07-19", "rms": 0.7, "peak": 1.6, "kurtosis": 0.1,
-         "crest_factor": 2.4, "fault_type": "hotspot", "severity": "moderate", "confidence": 0.80},
+        {
+            "measured_at": "2026-07-17",
+            "rms": 0.6,
+            "peak": 1.4,
+            "kurtosis": -0.1,
+            "crest_factor": 2.2,
+            "fault_type": "hotspot",
+            "severity": "moderate",
+            "confidence": 0.75,
+        },
+        {
+            "measured_at": "2026-07-18",
+            "rms": 0.65,
+            "peak": 1.5,
+            "kurtosis": 0.0,
+            "crest_factor": 2.3,
+            "fault_type": "hotspot",
+            "severity": "moderate",
+            "confidence": 0.78,
+        },
+        {
+            "measured_at": "2026-07-19",
+            "rms": 0.7,
+            "peak": 1.6,
+            "kurtosis": 0.1,
+            "crest_factor": 2.4,
+            "fault_type": "hotspot",
+            "severity": "moderate",
+            "confidence": 0.80,
+        },
     ]
     vib = generate_sample(fault_type=FaultType.NORMAL)
     aco = generate_acoustic_sample(fault_type=AcousticFaultType.NORMAL)
     thm = generate_thermal_frame(fault_type=ThermalFaultType.HOTSPOT, severity=0.5)
-    result = await ANALYZER.analyze("T-012", vibration=vib, acoustic=aco, thermal=thm,
-                                     station_history=history)
+    result = await ANALYZER.analyze(
+        "T-012", vibration=vib, acoustic=aco, thermal=thm, station_history=history
+    )
     assert "TRENDING" in result.recommendation
     assert CorrelationTag.TRENDING_WORSE.value in result.correlation_tags
 
@@ -162,8 +187,9 @@ async def test_fusion_no_escalation_without_history():
     vib = generate_sample(fault_type=FaultType.NORMAL)
     aco = generate_acoustic_sample(fault_type=AcousticFaultType.NORMAL)
     thm = generate_thermal_frame(fault_type=ThermalFaultType.HOTSPOT, severity=0.5)
-    result = await ANALYZER.analyze("T-013", vibration=vib, acoustic=aco, thermal=thm,
-                                     station_history=None)
+    result = await ANALYZER.analyze(
+        "T-013", vibration=vib, acoustic=aco, thermal=thm, station_history=None
+    )
     assert "TRENDING" not in result.recommendation
 
 
@@ -173,6 +199,7 @@ async def test_fusion_no_escalation_without_history():
 @pytest.mark.asyncio
 async def test_db_init_creates_tables(test_db):
     import aiosqlite
+
     async with aiosqlite.connect(test_db.path) as conn:
         cursor = await conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
@@ -190,10 +217,17 @@ async def test_db_patrol_lifecycle(test_db):
     assert patrol_id > 0
 
     features = {
-        "rms": 0.39, "peak": 0.78, "crest_factor": 2.0, "kurtosis": -1.2,
-        "dominant_frequency_hz": 30.0, "energy_0_100hz": 0.1,
-        "energy_100_500hz": 0.01, "energy_500_1000hz": 0.001, "energy_1000_2000hz": 0.0001,
-        "sample_rate_hz": 4000.0, "bearing_analysis_available": True,
+        "rms": 0.39,
+        "peak": 0.78,
+        "crest_factor": 2.0,
+        "kurtosis": -1.2,
+        "dominant_frequency_hz": 30.0,
+        "energy_0_100hz": 0.1,
+        "energy_100_500hz": 0.01,
+        "energy_500_1000hz": 0.001,
+        "energy_1000_2000hz": 0.0001,
+        "sample_rate_hz": 4000.0,
+        "bearing_analysis_available": True,
     }
     m_id = await test_db.log_measurement(patrol_id, "M-001", "2026-07-19T00:01:00", features)
     assert m_id > 0
@@ -208,10 +242,17 @@ async def test_db_patrol_lifecycle(test_db):
 async def test_db_station_history(test_db):
     patrol_id = await test_db.start_patrol("Test Route", "2026-07-19T00:00:00")
     features = {
-        "rms": 0.5, "peak": 1.0, "crest_factor": 2.0, "kurtosis": 0.5,
-        "dominant_frequency_hz": 30.0, "energy_0_100hz": 0.1,
-        "energy_100_500hz": 0.01, "energy_500_1000hz": 0.001, "energy_1000_2000hz": 0.0001,
-        "sample_rate_hz": 4000.0, "bearing_analysis_available": True,
+        "rms": 0.5,
+        "peak": 1.0,
+        "crest_factor": 2.0,
+        "kurtosis": 0.5,
+        "dominant_frequency_hz": 30.0,
+        "energy_0_100hz": 0.1,
+        "energy_100_500hz": 0.01,
+        "energy_500_1000hz": 0.001,
+        "energy_1000_2000hz": 0.0001,
+        "sample_rate_hz": 4000.0,
+        "bearing_analysis_available": True,
     }
     await test_db.log_measurement(patrol_id, "M-001", "2026-07-19T00:01:00", features)
     await test_db.log_measurement(patrol_id, "M-001", "2026-07-19T00:02:00", features)
@@ -224,10 +265,17 @@ async def test_db_station_history(test_db):
 async def test_db_station_trend(test_db):
     patrol_id = await test_db.start_patrol("Test Route", "2026-07-19T00:00:00")
     features = {
-        "rms": 0.5, "peak": 1.0, "crest_factor": 2.0, "kurtosis": 0.5,
-        "dominant_frequency_hz": 30.0, "energy_0_100hz": 0.1,
-        "energy_100_500hz": 0.01, "energy_500_1000hz": 0.001, "energy_1000_2000hz": 0.0001,
-        "sample_rate_hz": 4000.0, "bearing_analysis_available": True,
+        "rms": 0.5,
+        "peak": 1.0,
+        "crest_factor": 2.0,
+        "kurtosis": 0.5,
+        "dominant_frequency_hz": 30.0,
+        "energy_0_100hz": 0.1,
+        "energy_100_500hz": 0.01,
+        "energy_500_1000hz": 0.001,
+        "energy_1000_2000hz": 0.0001,
+        "sample_rate_hz": 4000.0,
+        "bearing_analysis_available": True,
     }
     await test_db.log_measurement(patrol_id, "M-001", "2026-07-19T00:01:00", features)
     await test_db.log_measurement(patrol_id, "M-001", "2026-07-19T00:02:00", features)
@@ -248,11 +296,17 @@ async def test_trend_matches_persisted_fault_codes(test_db):
     """
     patrol_id = await test_db.start_patrol("Trend Route", "2026-07-19T00:00:00")
     features = {
-        "rms": 0.5, "peak": 1.0, "crest_factor": 2.0, "kurtosis": 0.5,
-        "dominant_frequency_hz": 30.0, "energy_0_100hz": 0.1,
-        "energy_100_500hz": 0.01, "energy_500_1000hz": 0.001,
+        "rms": 0.5,
+        "peak": 1.0,
+        "crest_factor": 2.0,
+        "kurtosis": 0.5,
+        "dominant_frequency_hz": 30.0,
+        "energy_0_100hz": 0.1,
+        "energy_100_500hz": 0.01,
+        "energy_500_1000hz": 0.001,
         "energy_1000_2000hz": 0.0001,
-        "sample_rate_hz": 4000.0, "bearing_analysis_available": True,
+        "sample_rate_hz": 4000.0,
+        "bearing_analysis_available": True,
     }
 
     for i in range(3):
@@ -261,14 +315,22 @@ async def test_trend_matches_persisted_fault_codes(test_db):
         thm = generate_thermal_frame(fault_type=ThermalFaultType.HOTSPOT, severity=0.5)
         history = await test_db.get_station_trend("TREND-1", limit=5)
         diagnosis = await ANALYZER.analyze(
-            "TREND-1", vibration=vib, acoustic=aco, thermal=thm,
+            "TREND-1",
+            vibration=vib,
+            acoustic=aco,
+            thermal=thm,
             station_history=history,
         )
         m_id = await test_db.log_measurement(
-            patrol_id, "TREND-1", f"2026-07-19T00:0{i}:00", features,
+            patrol_id,
+            "TREND-1",
+            f"2026-07-19T00:0{i}:00",
+            features,
         )
         await test_db.log_diagnosis(
-            m_id, "TREND-1", DiagnosisRecord.from_fused(diagnosis),
+            m_id,
+            "TREND-1",
+            DiagnosisRecord.from_fused(diagnosis),
             f"2026-07-19T00:0{i}:00",
         )
 
@@ -281,9 +343,15 @@ async def test_trend_matches_persisted_fault_codes(test_db):
 async def test_db_rejects_ad_hoc_diagnosis_objects(test_db):
     """log_diagnosis only accepts a DiagnosisRecord."""
     patrol_id = await test_db.start_patrol("R", "2026-07-19T00:00:00")
-    features = {"rms": 0.1, "peak": 0.2, "crest_factor": 2.0, "kurtosis": 0.0,
-                "dominant_frequency_hz": 30.0, "sample_rate_hz": 4000.0,
-                "bearing_analysis_available": True}
+    features = {
+        "rms": 0.1,
+        "peak": 0.2,
+        "crest_factor": 2.0,
+        "kurtosis": 0.0,
+        "dominant_frequency_hz": 30.0,
+        "sample_rate_hz": 4000.0,
+        "bearing_analysis_available": True,
+    }
     m_id = await test_db.log_measurement(patrol_id, "M-9", "2026-07-19T00:01:00", features)
 
     class Fake:
@@ -296,16 +364,27 @@ async def test_db_rejects_ad_hoc_diagnosis_objects(test_db):
 @pytest.mark.asyncio
 async def test_active_faults_uses_canonical_codes(test_db):
     patrol_id = await test_db.start_patrol("R", "2026-07-19T00:00:00")
-    features = {"rms": 0.1, "peak": 0.2, "crest_factor": 2.0, "kurtosis": 0.0,
-                "dominant_frequency_hz": 30.0, "sample_rate_hz": 4000.0,
-                "bearing_analysis_available": True}
+    features = {
+        "rms": 0.1,
+        "peak": 0.2,
+        "crest_factor": 2.0,
+        "kurtosis": 0.0,
+        "dominant_frequency_hz": 30.0,
+        "sample_rate_hz": 4000.0,
+        "bearing_analysis_available": True,
+    }
     m_id = await test_db.log_measurement(patrol_id, "M-7", "2026-07-19T00:01:00", features)
     await test_db.log_diagnosis(
-        m_id, "M-7",
+        m_id,
+        "M-7",
         DiagnosisRecord(
-            fault_type=FaultCode.BEARING_FAULT.value, confidence=0.9,
-            severity="severe", recommendation="replace", reasoning="x",
-            health="critical", priority=1,
+            fault_type=FaultCode.BEARING_FAULT.value,
+            confidence=0.9,
+            severity="severe",
+            recommendation="replace",
+            reasoning="x",
+            health="critical",
+            priority=1,
         ),
         "2026-07-19T00:01:00",
     )
@@ -319,13 +398,15 @@ async def test_active_faults_uses_canonical_codes(test_db):
 @pytest.mark.asyncio
 async def test_llm_fusion_uses_stubbed_response(stub_llm):
     """When the LLM answers, its verdict is used and its codes are normalised."""
-    stub_llm({
-        "overall_health": "critical",
-        "correlated_faults": ["bearing_outer_race", "hotspot"],
-        "recommendation": "Replace bearing now",
-        "priority": 1,
-        "reasoning": "vibration and thermal agree",
-    })
+    stub_llm(
+        {
+            "overall_health": "critical",
+            "correlated_faults": ["bearing_outer_race", "hotspot"],
+            "recommendation": "Replace bearing now",
+            "priority": 1,
+            "reasoning": "vibration and thermal agree",
+        }
+    )
     vib = generate_sample(fault_type=FaultType.BEARING_OUTER, severity=0.8)
     thm = generate_thermal_frame(fault_type=ThermalFaultType.HOTSPOT, severity=0.7)
     result = await ANALYZER.analyze("T-LLM", vibration=vib, thermal=thm)

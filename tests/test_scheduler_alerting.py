@@ -1,6 +1,5 @@
 """Tests for scheduler and alerting modules."""
 
-
 from datetime import time
 
 import pytest
@@ -20,11 +19,11 @@ from src.scheduler import _in_quiet_hours
 @pytest.mark.parametrize(
     "at,expected",
     [
-        ("22:00", True),   # exactly the start
-        ("23:30", True),   # before midnight
-        ("00:00", True),   # midnight itself
-        ("03:00", True),   # after midnight
-        ("06:00", True),   # exactly the end
+        ("22:00", True),  # exactly the start
+        ("23:30", True),  # before midnight
+        ("00:00", True),  # midnight itself
+        ("03:00", True),  # after midnight
+        ("06:00", True),  # exactly the end
         ("06:01", False),  # just past
         ("12:00", False),  # the middle of the working day
         ("21:59", False),  # just before
@@ -65,6 +64,7 @@ def test_quiet_hours_zero_length_window():
 
 
 # === AlertManager ===
+
 
 @pytest.mark.asyncio
 async def test_alert_critical_logged():

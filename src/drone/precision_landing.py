@@ -32,6 +32,7 @@ PID_YAW = {"kp": 0.5, "ki": 0.0, "kd": 0.1}
 @dataclass
 class MarkerDetection:
     """Detected ArUco marker position relative to drone."""
+
     marker_id: int
     center_x: float  # -1.0 to 1.0 (normalized image coords)
     center_y: float
@@ -187,9 +188,11 @@ class PrecisionLandingSystem:
         yaw = self.pid_yaw.update(detection.yaw_offset)
 
         # Check if close enough to land
-        if (detection.distance_cm < 30.0 and
-                abs(detection.center_x) < 0.1 and
-                abs(detection.center_y) < 0.1):
+        if (
+            detection.distance_cm < 30.0
+            and abs(detection.center_x) < 0.1
+            and abs(detection.center_y) < 0.1
+        ):
             self._landing_complete = True
 
         return {
@@ -247,15 +250,17 @@ class PrecisionLandingSystem:
 
             self._marker_lost_count = 0
             commands = self.compute_landing_commands(detection)
-            await drone.send_rc(
-                commands["lr"], commands["fb"], commands["ud"], commands["yaw"]
-            )
+            await drone.send_rc(commands["lr"], commands["fb"], commands["ud"], commands["yaw"])
 
             if iteration % 20 == 0:
                 logger.info(
                     "[LAND] Dist=%.0fcm X=%.2f Y=%.2f | RC: lr=%d fb=%d ud=%d",
-                    detection.distance_cm, detection.center_x, detection.center_y,
-                    commands["lr"], commands["fb"], commands["ud"],
+                    detection.distance_cm,
+                    detection.center_x,
+                    detection.center_y,
+                    commands["lr"],
+                    commands["fb"],
+                    commands["ud"],
                 )
 
             await asyncio.sleep(0.05)

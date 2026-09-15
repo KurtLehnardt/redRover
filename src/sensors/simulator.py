@@ -26,9 +26,11 @@ def set_seed(seed: int | None) -> None:
     global _rng
     _rng = np.random.default_rng(seed)
 
+
 # =============================================================================
 # VIBRATION SIMULATION
 # =============================================================================
+
 
 def generate_normal(
     sample_rate: int = 4000,
@@ -157,9 +159,15 @@ def generate_sample(
     """Generate a complete simulated vibration sample."""
     generators = {
         FaultType.NORMAL: lambda: generate_normal(sample_rate, duration, rpm),
-        FaultType.BEARING_INNER: lambda: generate_bearing_fault(sample_rate, duration, rpm, "inner", severity),
-        FaultType.BEARING_OUTER: lambda: generate_bearing_fault(sample_rate, duration, rpm, "outer", severity),
-        FaultType.BEARING_BALL: lambda: generate_bearing_fault(sample_rate, duration, rpm, "ball", severity),
+        FaultType.BEARING_INNER: lambda: generate_bearing_fault(
+            sample_rate, duration, rpm, "inner", severity
+        ),
+        FaultType.BEARING_OUTER: lambda: generate_bearing_fault(
+            sample_rate, duration, rpm, "outer", severity
+        ),
+        FaultType.BEARING_BALL: lambda: generate_bearing_fault(
+            sample_rate, duration, rpm, "ball", severity
+        ),
         FaultType.MISALIGNMENT: lambda: generate_misalignment(sample_rate, duration, rpm, severity),
         FaultType.IMBALANCE: lambda: generate_imbalance(sample_rate, duration, rpm, severity),
         FaultType.LOOSENESS: lambda: generate_looseness(sample_rate, duration, rpm, severity),
@@ -179,6 +187,7 @@ def generate_sample(
 # =============================================================================
 # ACOUSTIC SIMULATION
 # =============================================================================
+
 
 def generate_acoustic_normal(
     sample_rate: int = 96000,
@@ -212,6 +221,7 @@ def generate_air_leak(
     # Ultrasonic hissing: band-limited noise in 20-40 kHz
     noise = _rng.standard_normal(len(t)).astype(np.float32)
     from scipy import signal as sp_signal
+
     sos = sp_signal.butter(4, [20000, 40000], btype="bandpass", fs=sample_rate, output="sos")
     leak_noise = sp_signal.sosfilt(sos, noise)
 
@@ -284,9 +294,15 @@ def generate_acoustic_sample(
     generators = {
         AcousticFaultType.NORMAL: lambda: generate_acoustic_normal(sample_rate, duration),
         AcousticFaultType.AIR_LEAK: lambda: generate_air_leak(sample_rate, duration, severity),
-        AcousticFaultType.GAS_LEAK: lambda: generate_air_leak(sample_rate, duration, severity * 1.5),
-        AcousticFaultType.FRICTION: lambda: generate_metal_friction(sample_rate, duration, severity),
-        AcousticFaultType.ARCING: lambda: generate_electrical_arcing(sample_rate, duration, severity),
+        AcousticFaultType.GAS_LEAK: lambda: generate_air_leak(
+            sample_rate, duration, severity * 1.5
+        ),
+        AcousticFaultType.FRICTION: lambda: generate_metal_friction(
+            sample_rate, duration, severity
+        ),
+        AcousticFaultType.ARCING: lambda: generate_electrical_arcing(
+            sample_rate, duration, severity
+        ),
     }
 
     raw_signal = generators[fault_type]()
@@ -303,6 +319,7 @@ def generate_acoustic_sample(
 # =============================================================================
 # THERMAL SIMULATION
 # =============================================================================
+
 
 def generate_thermal_normal(
     resolution: tuple[int, int] = (24, 32),

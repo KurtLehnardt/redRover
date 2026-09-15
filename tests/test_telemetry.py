@@ -18,9 +18,7 @@ def _clean_telemetry():
 
 
 def _scrape(port: int) -> str:
-    return urllib.request.urlopen(
-        f"http://127.0.0.1:{port}/metrics", timeout=5
-    ).read().decode()
+    return urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=5).read().decode()
 
 
 def _free_port() -> int:
@@ -47,7 +45,9 @@ def test_metrics_are_served_when_a_port_is_configured():
 
     port = _free_port()
     telemetry.init_telemetry(
-        service_name="redrover-test", enabled=True, prometheus_port=port,
+        service_name="redrover-test",
+        enabled=True,
+        prometheus_port=port,
     )
     if telemetry._prometheus_server is None:
         pytest.skip("prometheus exporter unavailable")
@@ -72,7 +72,9 @@ def test_shutdown_stops_the_metrics_server():
 
     port = _free_port()
     telemetry.init_telemetry(
-        service_name="redrover-test", enabled=True, prometheus_port=port,
+        service_name="redrover-test",
+        enabled=True,
+        prometheus_port=port,
     )
     if telemetry._prometheus_server is None:
         pytest.skip("prometheus exporter unavailable")
@@ -96,8 +98,8 @@ def test_prometheus_targets_cover_both_processes():
     from pathlib import Path
 
     body = (Path(__file__).resolve().parent.parent / "prometheus.yml").read_text()
-    assert "localhost:8080" in body   # dashboard
-    assert "localhost:9464" in body   # patrol / scheduler
+    assert "localhost:8080" in body  # dashboard
+    assert "localhost:9464" in body  # patrol / scheduler
 
 
 def test_metrics_go_to_the_provider_this_process_installed():
@@ -117,15 +119,15 @@ def test_metrics_go_to_the_provider_this_process_installed():
     telemetry.shutdown_telemetry()
     port = _free_port()
     telemetry.init_telemetry(
-        service_name="redrover-second", enabled=True, prometheus_port=port,
+        service_name="redrover-second",
+        enabled=True,
+        prometheus_port=port,
     )
     if telemetry._prometheus_server is None:
         pytest.skip("prometheus exporter unavailable")
 
     assert telemetry._meter_provider is not first_provider
-    counter = telemetry.get_meter("redrover.second").create_counter(
-        "redrover.second.hits"
-    )
+    counter = telemetry.get_meter("redrover.second").create_counter("redrover.second.hits")
     counter.add(1)
 
     assert "redrover_second_hits" in _scrape(port)

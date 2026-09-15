@@ -25,6 +25,7 @@ class ThermalFaultType(str, Enum):
 @dataclass
 class ThermalFrame:
     """A single thermal camera frame (e.g., MLX90640 = 32x24 pixels)."""
+
     station_id: str
     timestamp: float
     pixels: NDArray[np.float32]  # Temperature in Celsius, shape (height, width)
@@ -96,20 +97,22 @@ def detect_hotspots(
                 continue
             visited.add((cy, cx))
             region_pixels.append((cy, cx, frame.pixels[cy, cx]))
-            stack.extend([(cy+1, cx), (cy-1, cx), (cy, cx+1), (cy, cx-1)])
+            stack.extend([(cy + 1, cx), (cy - 1, cx), (cy, cx + 1), (cy, cx - 1)])
 
         if region_pixels:
             temps = [p[2] for p in region_pixels]
             ys = [p[0] for p in region_pixels]
             xs = [p[1] for p in region_pixels]
-            hotspots.append({
-                "center_y": int(np.mean(ys)),
-                "center_x": int(np.mean(xs)),
-                "max_temp": float(max(temps)),
-                "mean_temp": float(np.mean(temps)),
-                "pixel_count": len(region_pixels),
-                "delta_above_ambient": float(max(temps) - frame.ambient_temp),
-            })
+            hotspots.append(
+                {
+                    "center_y": int(np.mean(ys)),
+                    "center_x": int(np.mean(xs)),
+                    "max_temp": float(max(temps)),
+                    "mean_temp": float(np.mean(temps)),
+                    "pixel_count": len(region_pixels),
+                    "delta_above_ambient": float(max(temps) - frame.ambient_temp),
+                }
+            )
 
     return sorted(hotspots, key=lambda h: h["max_temp"], reverse=True)
 
@@ -125,10 +128,10 @@ def extract_thermal_features(frame: ThermalFrame) -> dict:
     # Quadrant analysis (localize heat distribution)
     h, w = frame.pixels.shape
     quadrants = {
-        "top_left": frame.pixels[:h//2, :w//2],
-        "top_right": frame.pixels[:h//2, w//2:],
-        "bottom_left": frame.pixels[h//2:, :w//2],
-        "bottom_right": frame.pixels[h//2:, w//2:],
+        "top_left": frame.pixels[: h // 2, : w // 2],
+        "top_right": frame.pixels[: h // 2, w // 2 :],
+        "bottom_left": frame.pixels[h // 2 :, : w // 2],
+        "bottom_right": frame.pixels[h // 2 :, w // 2 :],
     }
 
     return {
