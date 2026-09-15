@@ -26,6 +26,11 @@ models/*.bin
 models/*.gguf
 data/raw/
 data/*.db
+# SQLite in WAL mode writes these sidecars next to the database. `*.db` does
+# not match them, so they were being committed.
+data/*.db-wal
+data/*.db-shm
+data/captures/
 data/room_map.png
 data/room_map_stats.json
 *.wav
