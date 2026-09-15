@@ -46,6 +46,15 @@ def heading_difference(target_deg: float, current_deg: float) -> float:
     return (target_deg - current_deg + 180.0) % 360.0 - 180.0
 
 
+def _consume_exception(task: asyncio.Task) -> None:
+    """Retrieve a detached task's exception so asyncio does not warn."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.debug("detached rover task failed: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # Sphero V2 BLE protocol constants
 # ---------------------------------------------------------------------------
@@ -308,6 +317,11 @@ class RoverController:
             'gyroscope': (0.0, 0.0, 0.0),      # gx, gy, gz in deg/s
         }
         self._streaming = False
+        # Incremented whenever a sensor's values are actually written, so a
+        # consumer can distinguish a newly delivered packet from a re-read of
+        # the same cached tuple. Polling `sensor_data` on a timer cannot tell
+        # the difference, and reports the poll rate as the sample rate.
+        self._sensor_updates: dict[str, int] = {}
         self._sensor_callbacks = []  # list of async callbacks
         # asyncio keeps only weak references to tasks, so a fire-and-forget
         # callback task can be collected mid-execution.  Hold strong refs.
@@ -458,6 +472,7 @@ class RoverController:
             name = _SENSOR_NAMES.get(sensor_id)
             if name and name in self._sensor_data:
                 self._sensor_data[name] = tuple(values)
+                self._sensor_updates[name] = self._sensor_updates.get(name, 0) + 1
 
         # The locator is a measured position, so trust it over dead reckoning.
         if _SENSOR_LOCATOR in slot_sensors:
@@ -836,6 +851,15 @@ class RoverController:
         """Return a copy of the latest sensor data dict."""
         return dict(self._sensor_data)
 
+    def sensor_update_count(self, name: str) -> int:
+        """How many packets have updated `name` since connect.
+
+        Lets a consumer sample once per delivered packet instead of once per
+        clock tick, which is the difference between reporting the rate the
+        sensor achieved and reporting the rate you happened to poll at.
+        """
+        return self._sensor_updates.get(name, 0)
+
     def inject_sensor_data(self, **values) -> None:
         """Set sensor values directly.
 
@@ -845,6 +869,7 @@ class RoverController:
         for key, value in values.items():
             if key in self._sensor_data:
                 self._sensor_data[key] = value
+                self._sensor_updates[key] = self._sensor_updates.get(key, 0) + 1
         if 'locator' in values:
             self._position = tuple(values['locator'])
         self._dispatch_callbacks()
@@ -973,8 +998,11 @@ class RoverController:
                 await self._rvr.drive_with_heading(speed=0, heading=heading_int, flags=0)
 
         # ensure_future + shield keeps the command in flight even when the
-        # caller is cancelled or we stop waiting for it.
+        # caller is cancelled or we stop waiting for it. The done-callback
+        # consumes any late exception so an abandoned task does not surface as
+        # "Task exception was never retrieved" noise during shutdown.
         task = asyncio.ensure_future(_issue_stop())
+        task.add_done_callback(_consume_exception)
         try:
             await asyncio.wait_for(asyncio.shield(task), timeout=3.0)
         except TimeoutError:

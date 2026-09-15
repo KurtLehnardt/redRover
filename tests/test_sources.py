@@ -134,3 +134,74 @@ def test_sub_96khz_audio_marks_ultrasonic_unmeasured():
     assert "ultrasonic_band" in result.unobservable
     # A microphone that cannot hear the band must not be read as "no leak".
     assert result.confidence < 0.85
+
+
+# === Sampling honesty ===
+
+
+@pytest.mark.asyncio
+async def test_imu_source_reports_delivered_rate_not_poll_rate():
+    """Regression: the source used to poll on a timer.
+
+    When BLE delivers slower than the poll loop, polling re-reads the same
+    cached tuple, so the sample is padded with duplicates and reports the poll
+    rate as the sample rate. That is fabricated bandwidth, and it is what the
+    bearing-suppression logic downstream relies on being truthful.
+    """
+    import asyncio
+
+    from src.rover.controller import RoverController
+    from src.sensors.sources import RoverIMUVibrationSource
+
+    rover = RoverController(simulate=False)
+    rover._streaming = True  # pretend streaming is already running
+
+    # Deliver 20 packets over ~0.4 s while the source samples for 0.4 s.
+    delivered = 20
+
+    async def deliver():
+        for i in range(delivered):
+            rover.inject_sensor_data(accelerometer=(0.0, 0.0, 1.0 + 0.01 * i))
+            await asyncio.sleep(0.02)
+
+    source = RoverIMUVibrationSource(rover, duration=0.4, period_ms=10)
+    feeder = asyncio.create_task(deliver())
+    sample = await source.read("M-001")
+    feeder.cancel()
+
+    # One sample per delivered packet, not one per 10 ms tick.
+    assert len(sample.raw_signal) <= delivered
+    assert len(sample.raw_signal) >= 8
+    # And the reported rate matches what arrived.
+    assert sample.sample_rate == pytest.approx(
+        len(sample.raw_signal) / sample.duration, rel=0.25
+    )
+    # Duplicates would show up as repeated values; these are all distinct.
+    assert len(set(sample.raw_signal.tolist())) == len(sample.raw_signal)
+
+
+@pytest.mark.asyncio
+async def test_imu_source_ignores_packets_from_other_sensors():
+    """A locator packet must not be counted as an accelerometer sample."""
+    import asyncio
+
+    from src.rover.controller import RoverController
+    from src.sensors.sources import RoverIMUVibrationSource
+
+    rover = RoverController(simulate=False)
+    rover._streaming = True
+
+    async def deliver():
+        for i in range(12):
+            rover.inject_sensor_data(accelerometer=(0.0, 0.0, 1.0 + 0.01 * i))
+            await asyncio.sleep(0.01)
+            # Interleaved locator packets carry no new acceleration.
+            rover.inject_sensor_data(locator=(float(i), 0.0))
+            await asyncio.sleep(0.01)
+
+    source = RoverIMUVibrationSource(rover, duration=0.3, period_ms=10)
+    feeder = asyncio.create_task(deliver())
+    sample = await source.read("M-001")
+    feeder.cancel()
+
+    assert 8 <= len(sample.raw_signal) <= 12
