@@ -2,7 +2,16 @@ global:
   scrape_interval: 5s
 
 scrape_configs:
-  - job_name: "redrover"
+  # The dashboard serves /metrics from its own app.
+  - job_name: "redrover-dashboard"
     metrics_path: "/metrics"
     static_configs:
       - targets: ["localhost:8080"]
+
+  # A patrol or the scheduler runs in its own process and serves its metrics
+  # on [telemetry].prometheus_port. Without this target the patrol panels in
+  # grafana/dashboard.json have no data source at all.
+  - job_name: "redrover-patrol"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["localhost:9464"]

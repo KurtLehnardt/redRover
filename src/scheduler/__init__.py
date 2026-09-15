@@ -6,21 +6,28 @@ from datetime import datetime
 from datetime import time as dt_time
 
 from ..config import load_config
+from ..telemetry import shutdown_telemetry
 
 logger = logging.getLogger("redRover.scheduler")
 
 
-def _in_quiet_hours(start_str: str, end_str: str) -> bool:
-    """Check if current time is within quiet hours window."""
-    now = datetime.now().time()
+def _in_quiet_hours(
+    start_str: str, end_str: str, now: dt_time | None = None,
+) -> bool:
+    """Whether ``now`` falls inside the quiet-hours window.
+
+    ``now`` defaults to the current local time; passing it makes the
+    overnight-wrap branch testable, which is the only branch here with any
+    real logic in it.
+    """
+    current = now if now is not None else datetime.now().time()
     start = dt_time.fromisoformat(start_str)
     end = dt_time.fromisoformat(end_str)
 
     if start <= end:
-        return start <= now <= end
-    else:
-        # Overnight window (e.g., 22:00 - 06:00)
-        return now >= start or now <= end
+        return start <= current <= end
+    # Overnight window (e.g. 22:00 - 06:00) wraps past midnight.
+    return current >= start or current <= end
 
 
 async def run_scheduler(
@@ -89,12 +96,19 @@ def main():
                         help="Only run patrols during configured quiet hours")
     args = parser.parse_args()
 
-    asyncio.run(run_scheduler(
-        simulate=not args.real,
-        skip_ai=args.skip_ai,
-        enable_drone=not args.no_drone,
-        quiet_hours_only=args.quiet_hours_only,
-    ))
+    try:
+        asyncio.run(run_scheduler(
+            simulate=not args.real,
+            skip_ai=args.skip_ai,
+            enable_drone=not args.no_drone,
+            quiet_hours_only=args.quiet_hours_only,
+        ))
+    except KeyboardInterrupt:
+        logger.info("Scheduler stopped")
+    finally:
+        # The scheduler runs for the life of the process; without this its
+        # exporter threads outlive every patrol it ran.
+        shutdown_telemetry()
 
 
 if __name__ == "__main__":

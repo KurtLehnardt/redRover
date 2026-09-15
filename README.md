@@ -116,15 +116,29 @@ correlation tags so they never pollute that matching.
 
 `/api/remap`, `/api/demo-patrol`, and `/api/estop` physically move the robot.
 
-- All three require `[dashboard].auth_token`, sent as `X-RedRover-Token` or
-  `Authorization: Bearer <token>`. Prefer the environment:
-  `REDROVER_DASHBOARD__AUTH_TOKEN=...`
+- All three require `[dashboard].auth_token`, sent as `X-RedRover-Token`,
+  `Authorization: Bearer <token>`, or the session cookie. Prefer the
+  environment: `REDROVER_DASHBOARD__AUTH_TOKEN=...`
+- The browser UI unlocks by posting the token to `/api/session`, which returns
+  it as an **HttpOnly, SameSite=strict** cookie — out of reach of page scripts,
+  and unusable by a cross-site request. Until then the page shows an unlock
+  form instead of buttons that would only 401.
+- The page loads **no third-party scripts**. An appliance that advertises no
+  cloud dependency should not go blank when the factory network does.
 - With no token configured they return **503** — disabled, not open.
 - CORS is restricted to `[dashboard].allowed_origins`; `"*"` is rejected at
   config-load time.
 - The default bind is `127.0.0.1`.
 - `POST /api/estop` latches an emergency stop; motors stop and further drive
   commands are refused until `clear_estop()`.
+
+## Metrics
+
+A patrol runs in its own process, so it serves its own scrape endpoint on
+`[telemetry].prometheus_port` (9464 by default); the dashboard serves
+`/metrics` from its own app on the dashboard port. `prometheus.yml` scrapes
+both — with only the dashboard target, every patrol panel in
+`grafana/dashboard.json` has no data source at all.
 
 ## Configuration
 
@@ -182,10 +196,14 @@ only what your hardware needs.
 ## Testing
 
 ```bash
-pytest                          # Python suite, offline, ~7s
+pytest                          # Python suite, offline, ~17s
 pytest -m llm                   # opt in to tests that need a live Ollama
-pio test -d firmware -e native  # 45 firmware tests, no board attached
+pio test -d firmware -e native  # 55 firmware tests, no board attached
 ```
+
+The simulator draws from a seeded generator that `conftest.py` pins, so a
+failing signal assertion reproduces instead of being a coin flip. Seed a
+simulated patrol yourself with `src.sensors.simulator.set_seed()`.
 
 The Python suite never reaches Ollama, real hardware, or `data/redRover.db`:
 those are stubbed or redirected to a temp directory by `tests/conftest.py`.

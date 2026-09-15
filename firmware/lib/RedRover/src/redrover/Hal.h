@@ -32,6 +32,26 @@ public:
     // Blocking pulse measurement, used by ultrasonic rangefinders.
     // Returns 0 on timeout.
     virtual uint32_t pulseInMicros(uint8_t pin, bool level, uint32_t timeoutUs) = 0;
+
+    // Disable/restore interrupts around a multi-byte read shared with an ISR.
+    // On an 8-bit AVR a 32-bit load is four instructions; an interrupt landing
+    // between them yields a torn value, so any counter an ISR writes must be
+    // read inside this pair.
+    virtual void enterCritical() {}
+    virtual void exitCritical() {}
+};
+
+// RAII guard for Hal::enterCritical / exitCritical.
+class CriticalSection {
+public:
+    explicit CriticalSection(Hal& hal) : hal_(hal) { hal_.enterCritical(); }
+    ~CriticalSection() { hal_.exitCritical(); }
+
+    CriticalSection(const CriticalSection&) = delete;
+    CriticalSection& operator=(const CriticalSection&) = delete;
+
+private:
+    Hal& hal_;
 };
 
 }  // namespace redrover

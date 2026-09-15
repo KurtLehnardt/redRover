@@ -435,6 +435,22 @@ class FirmwareRover:
         ground_speed = max(0.05, fraction * self.max_speed_mps)
         return min(distance_m / ground_speed, self.max_drive_seconds)
 
+    async def drive(
+        self, linear_mm_s: int, angular_mrad_s: int, lateral_mm_s: int = 0,
+    ) -> None:
+        """Issue a velocity command directly.
+
+        The public form of the chassis interface, for callers that already
+        think in velocities -- the ROS bridge translating ``cmd_vel``, for one.
+        """
+        if self._estop and (linear_mm_s or angular_mrad_s or lateral_mm_s):
+            return
+        await self._send(
+            wire.MsgType.DRIVE,
+            wire.drive_payload(linear_mm_s, angular_mrad_s, lateral_mm_s),
+            expect_ack=False,
+        )
+
     async def drive_with_heading(self, speed: int, heading: int) -> None:
         """Drive at `speed` (0-255) steering toward `heading` degrees.
 

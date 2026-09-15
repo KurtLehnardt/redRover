@@ -28,7 +28,16 @@ public:
 
     uint32_t pulseInMicros(uint8_t, bool, uint32_t) override { return pulseUs; }
 
+    void enterCritical() override {
+        ++criticalDepth;
+        ++criticalEntries;
+    }
+    void exitCritical() override { --criticalDepth; }
+
     void advance(uint32_t ms) { nowMs += ms; }
+
+    int criticalDepth = 0;
+    int criticalEntries = 0;
 
     uint8_t mode[kPins] = {0};
     bool digital[kPins] = {false};

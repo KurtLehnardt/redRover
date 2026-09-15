@@ -92,6 +92,13 @@ class DashboardConfig(BaseModel):
         return v
 
 
+class DroneConfig(BaseModel):
+    # "mission_pad" | "aruco" | "plain" -- see src/drone/controller.py
+    landing_mode: str = "mission_pad"
+    marker_id: int = 42
+    min_battery: int = 20
+
+
 class AlertingConfig(BaseModel):
     webhook_url: str = ""
     min_health: str = "warning"  # "monitor" | "warning" | "critical"
@@ -105,6 +112,9 @@ class TelemetryConfig(BaseModel):
     export_interval_ms: int = 5000
     console_export: bool = False
     environment: str = "development"
+    # Port for this process to serve /metrics on. 0 disables it; the dashboard
+    # leaves it at 0 because its own app already serves /metrics.
+    prometheus_port: int = 9464
 
 
 class DatabaseConfig(BaseModel):
@@ -183,6 +193,7 @@ class Settings(BaseSettings):
     ai: AIConfig = AIConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
     dashboard: DashboardConfig = DashboardConfig()
+    drone: DroneConfig = DroneConfig()
     alerting: AlertingConfig = AlertingConfig()
     telemetry: TelemetryConfig = TelemetryConfig()
     database: DatabaseConfig = DatabaseConfig()

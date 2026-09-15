@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>redRover — Vibration Analyst</title>
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <style>
         :root {
             --bg: #0f1419;
@@ -83,6 +82,8 @@
         }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         .empty { color: var(--muted); font-style: italic; padding: 1rem 0; }
+        .status-msg { margin-left: 1rem; color: var(--muted); font-size: 0.85rem; }
+        code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 3px; }
     </style>
 </head>
 <body>
@@ -98,11 +99,7 @@
     <div class="grid">
         <div class="card">
             <h3>Active Faults</h3>
-            {% if faults %}
-            <div class="stat red">{{ faults|length }}</div>
-            {% else %}
-            <div class="stat green">0</div>
-            {% endif %}
+            <div id="fault-count" class="stat {{ 'red' if faults else 'green' }}">{{ faults|length }}</div>
         </div>
         <div class="card">
             <h3>Patrols Completed</h3>
@@ -111,7 +108,7 @@
     </div>
 
     <h2>Active Faults</h2>
-    <div class="card" id="faults-table" hx-get="/api/faults" hx-trigger="every 30s" hx-swap="innerHTML">
+    <div class="card" id="faults-table">
         {% if faults %}
         <table>
             <thead>
@@ -174,12 +171,175 @@
 
     <h2>Controls</h2>
     <div class="card">
-        <button class="btn" hx-post="/api/demo-patrol" hx-swap="none"
-                hx-indicator="#patrol-status"
-                onclick="this.disabled=true; this.textContent='Running...';">
-            Run Demo Patrol (Simulated)
+        {% if not control_enabled %}
+        <p class="empty">
+            Controls are disabled. These endpoints can physically move the robot,
+            so they stay off until <code>[dashboard].auth_token</code> (or
+            <code>REDROVER_DASHBOARD__AUTH_TOKEN</code>) is set.
+        </p>
+        {% elif not authenticated %}
+        <form id="unlock-form" autocomplete="off">
+            <label for="token" style="color: var(--muted); font-size: 0.85rem;">
+                Enter the control token to unlock
+            </label>
+            <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+                <input type="password" id="token" name="token" required
+                       style="flex: 1; max-width: 320px; padding: 0.5rem;
+                              background: var(--bg); color: var(--text);
+                              border: 1px solid var(--border); border-radius: 6px;">
+                <button class="btn" type="submit">Unlock</button>
+            </div>
+        </form>
+        <span id="unlock-status" class="status-msg"></span>
+        {% else %}
+        <button class="btn" id="demo-patrol">Run Demo Patrol (Simulated)</button>
+        <button class="btn" id="estop"
+                style="background: var(--red); margin-left: 0.5rem;">Emergency Stop</button>
+        <button class="btn" id="lock"
+                style="background: var(--border); color: var(--text); margin-left: 0.5rem;">
+            Lock
         </button>
-        <span id="patrol-status" style="margin-left: 1rem; color: var(--muted);"></span>
+        <span id="patrol-status" class="status-msg"></span>
+        {% endif %}
     </div>
+
+<script>
+(function () {
+    "use strict";
+
+    var SEVERITY_BADGE = {
+        severe: "badge-critical",
+        critical: "badge-critical",
+        moderate: "badge-warning"
+    };
+
+    function setStatus(id, message, colour) {
+        var el = document.getElementById(id);
+        if (el) {
+            el.textContent = message;
+            el.style.color = colour || "var(--muted)";
+        }
+    }
+
+    // --- live fault table -------------------------------------------------
+    // /api/faults returns JSON. The page used to swap that response straight
+    // into innerHTML, which replaced the table with raw JSON every 30s.
+    function renderFaults(faults) {
+        var card = document.getElementById("faults-table");
+        if (!card) { return; }
+        var count = document.getElementById("fault-count");
+        if (count) {
+            count.textContent = faults.length;
+            count.className = "stat " + (faults.length ? "red" : "green");
+        }
+        if (!faults.length) {
+            card.innerHTML = '<p class="empty">No active faults \u2014 all stations healthy.</p>';
+            return;
+        }
+        var rows = faults.map(function (f) {
+            var badge = SEVERITY_BADGE[f.severity] || "badge-normal";
+            var confidence = Math.round((f.confidence || 0) * 100);
+            return "<tr>"
+                + '<td><a href="/station/' + encodeURIComponent(f.station_id)
+                + '" style="color: var(--blue);">' + escapeHtml(f.station_id) + "</a></td>"
+                + "<td>" + escapeHtml(f.fault_type) + "</td>"
+                + '<td><span class="badge ' + badge + '">'
+                + escapeHtml(f.severity || "unknown") + "</span></td>"
+                + "<td>" + confidence + "%</td>"
+                + "<td>" + escapeHtml(f.recommendation || "") + "</td>"
+                + "</tr>";
+        }).join("");
+        card.innerHTML = "<table><thead><tr><th>Station</th><th>Fault</th>"
+            + "<th>Severity</th><th>Confidence</th><th>Action</th></tr></thead>"
+            + "<tbody>" + rows + "</tbody></table>";
+    }
+
+    function escapeHtml(value) {
+        var div = document.createElement("div");
+        div.textContent = value === null || value === undefined ? "" : String(value);
+        return div.innerHTML;
+    }
+
+    function refreshFaults() {
+        fetch("/api/faults", { credentials: "same-origin" })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (faults) { if (faults) { renderFaults(faults); } })
+            .catch(function () { /* keep the last good render */ });
+    }
+    setInterval(refreshFaults, 30000);
+
+    // --- controls ---------------------------------------------------------
+    function post(url, body) {
+        return fetch(url, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: body ? JSON.stringify(body) : null
+        });
+    }
+
+    var unlockForm = document.getElementById("unlock-form");
+    if (unlockForm) {
+        unlockForm.addEventListener("submit", function (event) {
+            event.preventDefault();
+            var token = document.getElementById("token").value;
+            setStatus("unlock-status", "Unlocking...");
+            post("/api/session", { token: token }).then(function (response) {
+                if (response.ok) {
+                    window.location.reload();
+                } else {
+                    setStatus("unlock-status", "Invalid token.", "var(--red)");
+                }
+            }).catch(function () {
+                setStatus("unlock-status", "Could not reach the server.", "var(--red)");
+            });
+        });
+    }
+
+    var demo = document.getElementById("demo-patrol");
+    if (demo) {
+        demo.addEventListener("click", function () {
+            demo.disabled = true;
+            var original = demo.textContent;
+            demo.textContent = "Running...";
+            setStatus("patrol-status", "Patrol in progress...");
+            post("/api/demo-patrol").then(function (response) {
+                return response.ok ? response.json() : Promise.reject(response.status);
+            }).then(function (result) {
+                setStatus("patrol-status",
+                    result.stations_visited + " stations, "
+                    + result.faults_detected + " faults.",
+                    result.faults_detected ? "var(--yellow)" : "var(--green)");
+                refreshFaults();
+            }).catch(function (status) {
+                setStatus("patrol-status",
+                    status === 401 ? "Session expired \u2014 reload and unlock."
+                                   : "Patrol failed.", "var(--red)");
+            }).finally(function () {
+                demo.disabled = false;
+                demo.textContent = original;
+            });
+        });
+    }
+
+    var estop = document.getElementById("estop");
+    if (estop) {
+        estop.addEventListener("click", function () {
+            post("/api/estop").then(function (response) {
+                setStatus("patrol-status",
+                    response.ok ? "Emergency stop engaged." : "Emergency stop failed.",
+                    response.ok ? "var(--red)" : "var(--yellow)");
+            });
+        });
+    }
+
+    var lock = document.getElementById("lock");
+    if (lock) {
+        lock.addEventListener("click", function () {
+            post("/api/session/logout").then(function () { window.location.reload(); });
+        });
+    }
+}());
+</script>
 </body>
 </html>

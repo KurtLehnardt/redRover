@@ -55,6 +55,32 @@ public:
     uint32_t pulseInMicros(uint8_t pin, bool level, uint32_t timeoutUs) override {
         return pulseIn(pin, level ? HIGH : LOW, timeoutUs);
     }
+
+    void enterCritical() override {
+        savedInterrupts_ = interruptsEnabled();
+        noInterrupts();
+    }
+
+    void exitCritical() override {
+        // Restore rather than unconditionally re-enabling: nesting, or a call
+        // from inside an ISR, must not turn interrupts on early.
+        if (savedInterrupts_) {
+            interrupts();
+        }
+    }
+
+private:
+    static bool interruptsEnabled() {
+#if defined(__AVR__)
+        return (SREG & 0x80) != 0;
+#elif defined(__arm__)
+        return (__get_PRIMASK() & 1) == 0;
+#else
+        return true;
+#endif
+    }
+
+    bool savedInterrupts_ = true;
 };
 
 }  // namespace redrover

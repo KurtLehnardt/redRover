@@ -94,10 +94,18 @@ class DroneController:
         min_battery: int = 20,
         capture_dir: Path | str = CAPTURE_DIR,
         time_scale: float = 1.0,
+        landing_mode: str = "mission_pad",
+        marker_id: int = 42,
     ):
         self.drone_type = drone_type
         self.tello_ip = tello_ip
         self.min_battery = min_battery
+        # "mission_pad" uses the Tello's own pad detection; "aruco" closes a
+        # PID loop on the marker printed on the RVR+ top plate; "plain" just
+        # descends where it is.
+        self.landing_mode = landing_mode
+        self.marker_id = marker_id
+        self._landing_system = None
         # Multiplies artificial delays in simulated flight (0.0 = no waiting).
         self.time_scale = max(0.0, time_scale)
         self.capture_dir = Path(capture_dir)
@@ -375,7 +383,15 @@ class DroneController:
             self._set_state(DroneState.DOCKED)
             return
 
-        if self.drone_type is DroneType.TELLO:
+        if self.drone_type is not DroneType.TELLO:
+            return
+
+        if self.landing_mode == "aruco":
+            if await self._aruco_land():
+                return
+            logger.warning("[DRONE] marker landing failed; falling back to mission pad")
+
+        if self.landing_mode in ("aruco", "mission_pad"):
             pad_id = await asyncio.to_thread(self._tello.get_mission_pad_id)
             if pad_id != -1:
                 logger.info(
@@ -385,9 +401,53 @@ class DroneController:
                     self._tello.go_xyz_speed_mid, 0, 0, 40, 20, pad_id,
                 )
                 await asyncio.sleep(2.0)
+
+        await self.land()
+
+    async def _aruco_land(self) -> bool:
+        """Close a PID loop on the marker printed on the RVR+ top plate."""
+        from .precision_landing import PrecisionLandingSystem
+
+        if self._landing_system is None:
+            self._landing_system = PrecisionLandingSystem(target_marker_id=self.marker_id)
+
+        streaming = False
+        try:
+            await asyncio.to_thread(self._tello.streamon)
+            streaming = True
+            await asyncio.sleep(1.0)
+            return await self._landing_system.execute_landing(self, self.read_frame)
+        except Exception as exc:
+            logger.error("[DRONE] marker landing error: %s", exc)
+            return False
+        finally:
+            if streaming:
+                try:
+                    await asyncio.to_thread(self._tello.streamoff)
+                except Exception as exc:
+                    logger.debug("[DRONE] streamoff: %s", exc)
+
+    # -- surface used by the precision-landing controller -------------------
+
+    async def send_rc(self, lr: int, fb: int, ud: int, yaw: int) -> None:
+        """Send a raw RC command. Each axis is -100..100."""
+        if self.drone_type is DroneType.TELLO and self._tello is not None:
+            await asyncio.to_thread(self._tello.send_rc_control, lr, fb, ud, yaw)
+        else:
+            logger.debug("[DRONE] rc lr=%d fb=%d ud=%d yaw=%d", lr, fb, ud, yaw)
+
+    async def land(self) -> None:
+        """Land where the drone currently is."""
+        if self.drone_type is DroneType.TELLO and self._tello is not None:
             await asyncio.to_thread(self._tello.land)
-            self._altitude = 0.0
-            self._set_state(DroneState.DOCKED)
+        self._altitude = 0.0
+        self._set_state(DroneState.DOCKED)
+
+    def read_frame(self):
+        """Grab the current camera frame, or None. Blocking; call off-loop."""
+        if self.drone_type is DroneType.TELLO and self._tello is not None:
+            return self._tello.get_frame_read().frame
+        return None
 
     async def emergency_land(self):
         """Emergency landing — land immediately at the current position."""

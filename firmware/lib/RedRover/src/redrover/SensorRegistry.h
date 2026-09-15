@@ -11,6 +11,14 @@
 
 namespace redrover {
 
+// The enabled/failed masks below are uint32_t, so index N is addressed as
+// 1UL << N. Past 32 sensors that shift is undefined behaviour and the masks
+// would silently stop tracking the extra sensors.
+static_assert(kMaxSensors <= 32,
+              "REDROVER_MAX_SENSORS cannot exceed 32: the enabled and failed "
+              "masks are 32-bit. Widen them to uint64_t to raise this.");
+static_assert(kMaxChannels >= 1, "REDROVER_MAX_CHANNELS must be at least 1");
+
 class SensorRegistry {
 public:
     // Register a sensor. Returns the assigned id, or 0xFF if the table is

@@ -158,6 +158,7 @@ async def run_patrol(
         export_interval_ms=config.telemetry.export_interval_ms,
         console_export=config.telemetry.console_export,
         environment=config.telemetry.environment,
+        prometheus_port=config.telemetry.prometheus_port,
     )
     tracer = get_tracer()
     meter = get_meter()
@@ -186,6 +187,9 @@ async def run_patrol(
     drone = DroneController(
         drone_type=DroneType.SIMULATED if simulate else DroneType.TELLO,
         time_scale=config.simulation.time_scale,
+        min_battery=config.drone.min_battery,
+        landing_mode=config.drone.landing_mode,
+        marker_id=config.drone.marker_id,
     )
     orchestrator = DroneRoverOrchestrator(rover=rover, drone=drone)
     db = Database(config.database.path)
