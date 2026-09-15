@@ -104,23 +104,39 @@ class RoverIMUVibrationSource:
         if getattr(self.rover, "simulate", False):
             raise SourceUnavailable("rover is in simulate mode; no real IMU behind it")
 
+        # Collect once per *delivered* packet, not once per clock tick.
+        # Polling ``sensor_data`` on a timer re-reads the same cached tuple
+        # whenever BLE runs slower than the poll loop, which both duplicates
+        # samples and reports the poll rate as the sample rate -- exactly the
+        # fabricated bandwidth this module exists to prevent.
         samples: list[float] = []
-        started_streaming = False
-        if not self.rover.streaming:
-            await self.rover.start_sensor_streaming(period_ms=self.period_ms)
-            started_streaming = True
+        last_count = self.rover.sensor_update_count("accelerometer")
 
+        async def collect(data: dict) -> None:
+            nonlocal last_count
+            count = self.rover.sensor_update_count("accelerometer")
+            if count == last_count:
+                return  # this packet carried some other sensor
+            last_count = count
+            ax, ay, az = data.get("accelerometer", (0.0, 0.0, 0.0))
+            # Gravity is a DC offset on whichever axis points down; the
+            # magnitude minus 1 g keeps the AC component carrying the vibration.
+            samples.append(float(np.sqrt(ax * ax + ay * ay + az * az)) - 1.0)
+
+        started_streaming = False
+        self.rover.add_sensor_callback(collect)
         try:
-            deadline = time.monotonic() + self.duration
-            interval = self.period_ms / 1000.0
+            if not self.rover.streaming:
+                await self.rover.start_sensor_streaming(period_ms=self.period_ms)
+                started_streaming = True
+
+            started = time.monotonic()
+            deadline = started + self.duration
             while time.monotonic() < deadline:
-                ax, ay, az = self.rover.sensor_data.get("accelerometer", (0.0, 0.0, 0.0))
-                # Gravity is a DC offset on whichever axis is down; magnitude
-                # minus 1g keeps the AC component that carries the vibration.
-                magnitude = float(np.sqrt(ax * ax + ay * ay + az * az))
-                samples.append(magnitude - 1.0)
-                await asyncio.sleep(interval)
+                await asyncio.sleep(0.005)
+            elapsed = time.monotonic() - started
         finally:
+            self.rover.remove_sensor_callback(collect)
             if started_streaming:
                 try:
                     await self.rover.stop_sensor_streaming()
@@ -129,13 +145,16 @@ class RoverIMUVibrationSource:
 
         if len(samples) < 8:
             raise SourceUnavailable(
-                f"IMU produced only {len(samples)} samples in {self.duration}s"
+                f"IMU delivered only {len(samples)} packets in {self.duration:.1f}s; "
+                "check that sensor streaming started"
             )
 
-        effective_rate = int(round(len(samples) / self.duration))
+        # The rate that actually arrived, over the window that actually
+        # elapsed -- never the rate we asked for.
+        effective_rate = int(round(len(samples) / max(elapsed, 1e-6)))
         if effective_rate < BEARING_ANALYSIS_MIN_RATE_HZ:
             logger.warning(
-                "[VIB] %s sampled at %d Hz — below the %d Hz needed for bearing "
+                "[VIB] %s delivered %d Hz — below the %d Hz needed for bearing "
                 "analysis. Low-frequency faults (imbalance, misalignment, "
                 "looseness) remain valid; bearing verdicts will be suppressed.",
                 self.name, effective_rate, BEARING_ANALYSIS_MIN_RATE_HZ,
@@ -146,7 +165,7 @@ class RoverIMUVibrationSource:
             timestamp=time.time(),
             raw_signal=np.asarray(samples, dtype=np.float32),
             sample_rate=effective_rate,
-            duration=self.duration,
+            duration=elapsed,
         )
 
 

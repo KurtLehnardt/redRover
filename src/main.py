@@ -189,8 +189,6 @@ async def run_patrol(
     )
     orchestrator = DroneRoverOrchestrator(rover=rover, drone=drone)
     db = Database(config.database.path)
-    await db.init()
-    await _sync_stations(db, config)
     alert_mgr = get_alert_manager(config)
 
     suite: SensorSuite = build_sensor_suite(
@@ -219,6 +217,12 @@ async def run_patrol(
 
     patrol_id: int | None = None
     try:
+        # Inside the try, so a failure here still runs the finally that closes
+        # the database and the LLM client. The scheduler calls run_patrol in a
+        # loop, and a leak per failed iteration adds up.
+        await db.init()
+        await _sync_stations(db, config)
+
         await rover.connect()
         if enable_drone:
             await drone.connect()
