@@ -57,30 +57,37 @@ public:
     }
 
     void enterCritical() override {
-        savedInterrupts_ = interruptsEnabled();
-        noInterrupts();
+        // Depth-counted rather than probing a hardware flag: CMSIS intrinsics
+        // like __get_PRIMASK are not declared on every ARM Arduino core
+        // (Teensy's, for one), and a portability layer cannot depend on them.
+        if (depth_++ == 0) {
+#if defined(__AVR__)
+            // Saving SREG restores the interrupt bit exactly, so this stays
+            // correct even if it is ever reached with interrupts already off.
+            savedStatus_ = SREG;
+#endif
+            noInterrupts();
+        }
     }
 
     void exitCritical() override {
-        // Restore rather than unconditionally re-enabling: nesting, or a call
-        // from inside an ISR, must not turn interrupts on early.
-        if (savedInterrupts_) {
+        if (depth_ == 0) {
+            return;  // unbalanced exit; never turn interrupts on speculatively
+        }
+        if (--depth_ == 0) {
+#if defined(__AVR__)
+            SREG = savedStatus_;
+#else
             interrupts();
+#endif
         }
     }
 
 private:
-    static bool interruptsEnabled() {
+    uint8_t depth_ = 0;
 #if defined(__AVR__)
-        return (SREG & 0x80) != 0;
-#elif defined(__arm__)
-        return (__get_PRIMASK() & 1) == 0;
-#else
-        return true;
+    uint8_t savedStatus_ = 0;
 #endif
-    }
-
-    bool savedInterrupts_ = true;
 };
 
 }  // namespace redrover
