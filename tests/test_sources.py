@@ -205,3 +205,65 @@ async def test_imu_source_ignores_packets_from_other_sensors():
     feeder.cancel()
 
     assert 8 <= len(sample.raw_signal) <= 12
+
+
+def test_simulator_is_reproducible_when_seeded():
+    """Regression: the generators drew from global np.random.
+
+    Every signal-shape assertion in this suite was a coin flip with no way to
+    reproduce a failure, and a simulated patrol could not be replayed.
+    """
+    import numpy as np
+
+    from src.sensors import simulator
+    from src.sensors.vibration import FaultType
+
+    simulator.set_seed(7)
+    first = simulator.generate_sample(fault_type=FaultType.BEARING_OUTER, severity=0.7)
+    simulator.set_seed(7)
+    second = simulator.generate_sample(fault_type=FaultType.BEARING_OUTER, severity=0.7)
+    assert np.array_equal(first.raw_signal, second.raw_signal)
+
+    simulator.set_seed(8)
+    other = simulator.generate_sample(fault_type=FaultType.BEARING_OUTER, severity=0.7)
+    assert not np.array_equal(first.raw_signal, other.raw_signal)
+
+
+def test_every_simulated_modality_is_seedable():
+    import numpy as np
+
+    from src.sensors import simulator
+    from src.sensors.acoustic import AcousticFaultType
+    from src.sensors.thermal import ThermalFaultType
+
+    def draw():
+        return (
+            simulator.generate_acoustic_sample(
+                fault_type=AcousticFaultType.ARCING, severity=0.6
+            ).raw_signal,
+            simulator.generate_thermal_frame(
+                fault_type=ThermalFaultType.HOTSPOT, severity=0.6
+            ).pixels,
+        )
+
+    simulator.set_seed(3)
+    acoustic_a, thermal_a = draw()
+    simulator.set_seed(3)
+    acoustic_b, thermal_b = draw()
+
+    assert np.array_equal(acoustic_a, acoustic_b)
+    assert np.array_equal(thermal_a, thermal_b)
+
+
+def test_no_module_draws_from_global_numpy_random():
+    """Global np.random cannot be seeded per-component or reproduced."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parent.parent / "src"
+    offenders = [
+        str(path.relative_to(root))
+        for path in root.rglob("*.py")
+        if re.search(r"\bnp\.random\.(?!default_rng)", path.read_text())
+    ]
+    assert offenders == [], f"should use a seeded Generator: {offenders}"

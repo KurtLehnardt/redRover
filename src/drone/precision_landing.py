@@ -83,12 +83,34 @@ class PrecisionLandingSystem:
 
     def __init__(self, target_marker_id: int = MARKER_ID):
         self.target_marker_id = target_marker_id
+        # Built once. Constructing the dictionary, the parameter block, and
+        # the detector per frame is pure overhead inside a 20 Hz control loop.
+        self._cached_detector = None
+        self._detector_unavailable = False
         self.pid_x = PIDController(**PID_X)
         self.pid_y = PIDController(**PID_Y)
         self.pid_z = PIDController(**PID_Z, output_limit=30.0)
         self.pid_yaw = PIDController(**PID_YAW, output_limit=40.0)
         self._landing_complete = False
         self._marker_lost_count = 0
+
+    def _detector(self):
+        """Lazily build and cache the ArUco detector."""
+        if self._cached_detector is not None:
+            return self._cached_detector
+        if self._detector_unavailable:
+            return None
+        try:
+            from cv2 import aruco
+        except ImportError:
+            logger.error("precision landing needs opencv-python with the aruco module")
+            self._detector_unavailable = True
+            return None
+        self._cached_detector = aruco.ArucoDetector(
+            aruco.getPredefinedDictionary(aruco.DICT_4X4_50),
+            aruco.DetectorParameters(),
+        )
+        return self._cached_detector
 
     def detect_marker(self, frame: np.ndarray) -> MarkerDetection | None:
         """Detect ArUco marker in camera frame.
@@ -99,22 +121,14 @@ class PrecisionLandingSystem:
         Returns:
             MarkerDetection if target marker found, None otherwise.
         """
-        try:
-            import cv2
-            from cv2 import aruco
-        except ImportError:
-            logger.error("OpenCV with aruco module required")
+        detector = self._detector()
+        if detector is None:
             return None
 
-        # Convert to grayscale
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        import cv2
 
-        # Detect ArUco markers
-        aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
-        parameters = aruco.DetectorParameters()
-        detector = aruco.ArucoDetector(aruco_dict, parameters)
-
-        corners, ids, rejected = detector.detectMarkers(gray)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+        corners, ids, _rejected = detector.detectMarkers(gray)
 
         if ids is None:
             return None
@@ -199,14 +213,17 @@ class PrecisionLandingSystem:
         self._marker_lost_count = 0
 
     async def execute_landing(self, drone, frame_source) -> bool:
-        """Execute full precision landing sequence.
+        """Execute the full precision landing sequence.
 
         Args:
-            drone: DroneController instance with send_rc_control method
-            frame_source: Callable that returns current camera frame
+            drone: anything exposing async ``send_rc(lr, fb, ud, yaw)`` and
+                ``land()`` -- normally a :class:`DroneController`.
+            frame_source: callable returning the current camera frame, or None.
+                It is run off the event loop because grabbing a frame from a
+                Tello blocks on a UDP read.
 
         Returns:
-            True if landing successful, False if aborted.
+            True if the landing completed, False if it was aborted.
         """
         self.reset()
         logger.info("[LAND] Starting precision landing sequence...")
@@ -214,50 +231,42 @@ class PrecisionLandingSystem:
         iteration = 0
 
         while iteration < max_iterations and not self._landing_complete:
-            frame = frame_source()
-            if frame is None:
-                self._marker_lost_count += 1
-                if self._marker_lost_count > 40:  # Lost for 2 seconds
-                    logger.warning("[LAND] Marker lost for too long, aborting")
-                    return False
-                await asyncio.sleep(0.05)
-                iteration += 1
-                continue
+            iteration += 1
+            frame = await asyncio.to_thread(frame_source)
+            detection = self.detect_marker(frame) if frame is not None else None
 
-            detection = self.detect_marker(frame)
             if detection is None:
                 self._marker_lost_count += 1
-                if self._marker_lost_count > 40:
-                    logger.warning("[LAND] Marker not found, aborting")
+                if self._marker_lost_count > 40:  # lost for ~2 seconds
+                    logger.warning("[LAND] Marker lost for too long, aborting")
+                    # Hold position rather than drifting on the last command.
+                    await drone.send_rc(0, 0, 0, 0)
                     return False
                 await asyncio.sleep(0.05)
-                iteration += 1
                 continue
 
             self._marker_lost_count = 0
             commands = self.compute_landing_commands(detection)
-
-            # Send RC commands to drone
-            if hasattr(drone, '_tello') and drone._tello:
-                drone._tello.send_rc_control(
-                    commands["lr"], commands["fb"],
-                    commands["ud"], commands["yaw"]
-                )
+            await drone.send_rc(
+                commands["lr"], commands["fb"], commands["ud"], commands["yaw"]
+            )
 
             if iteration % 20 == 0:
-                logger.info("[LAND] Dist=%.0fcm X=%.2f Y=%.2f | RC: lr=%d fb=%d ud=%d",
-                            detection.distance_cm, detection.center_x, detection.center_y,
-                            commands["lr"], commands["fb"], commands["ud"])
+                logger.info(
+                    "[LAND] Dist=%.0fcm X=%.2f Y=%.2f | RC: lr=%d fb=%d ud=%d",
+                    detection.distance_cm, detection.center_x, detection.center_y,
+                    commands["lr"], commands["fb"], commands["ud"],
+                )
 
             await asyncio.sleep(0.05)
-            iteration += 1
 
-        if self._landing_complete:
-            logger.info("[LAND] Aligned with cradle, executing final land")
-            if hasattr(drone, '_tello') and drone._tello:
-                drone._tello.send_rc_control(0, 0, 0, 0)
-                await asyncio.sleep(0.5)
-                drone._tello.land()
-            return True
+        if not self._landing_complete:
+            logger.warning("[LAND] Did not converge within %d iterations", max_iterations)
+            await drone.send_rc(0, 0, 0, 0)
+            return False
 
-        return False
+        logger.info("[LAND] Aligned with cradle, executing final land")
+        await drone.send_rc(0, 0, 0, 0)
+        await asyncio.sleep(0.5)
+        await drone.land()
+        return True

@@ -81,6 +81,16 @@ auth_token = ""
 allowed_origins = ["http://localhost:3000"]
 reload = false
 
+[drone]
+# How the drone lands back on the rover:
+#   "mission_pad" Tello's own downward pad detection (default)
+#   "aruco"       PID loop on the ArUco marker printed on the RVR+ top plate,
+#                 falling back to mission pads if the marker is never seen
+#   "plain"       descend where it is
+landing_mode = "mission_pad"
+# ArUco id printed on the rover's top plate, for landing_mode = "aruco".
+marker_id = 42
+
 [alerting]
 # Slack/Teams incoming webhook. Prefer the environment:
 # REDROVER_ALERTING__WEBHOOK_URL=https://hooks.slack.com/...
@@ -98,6 +108,11 @@ export_interval_ms = 5000
 # Set true to dump spans/metrics to stdout when debugging instrumentation.
 console_export = false
 environment = "development"
+# Port this process serves /metrics on, for Prometheus to scrape. A patrol runs
+# in its own process, so without a server here its metrics are collected and
+# never readable. 0 disables it; the dashboard sets 0 because its own app
+# already serves /metrics on the dashboard port.
+prometheus_port = 9464
 
 [database]
 path = "data/redRover.db"

@@ -5,9 +5,15 @@ Security note
 This API can physically move the robot (``/api/remap``, ``/api/demo-patrol``).
 Every state-changing endpoint therefore requires the shared secret from
 ``[dashboard].auth_token`` (or ``REDROVER_DASHBOARD__AUTH_TOKEN``), sent as
-``X-RedRover-Token`` or ``Authorization: Bearer <token>``.  With no token
-configured those endpoints return 503 rather than running unauthenticated, and
-CORS is restricted to the origins listed in config — never ``*``.
+``X-RedRover-Token``, ``Authorization: Bearer <token>``, or the session cookie
+set by ``POST /api/session``.  With no token configured those endpoints return
+503 rather than running unauthenticated, and CORS is restricted to the origins
+listed in config — never ``*``.
+
+The browser UI unlocks by posting the token to ``/api/session``, which returns
+it as an HttpOnly, SameSite=strict cookie.  HttpOnly keeps the token out of
+reach of any script on the page, and SameSite=strict is what makes a cookie
+safe to use for a robot-driving API: a cross-site request cannot carry it.
 """
 
 from __future__ import annotations
@@ -45,6 +51,9 @@ _MAP_STATS_PATH = _PROJECT_ROOT / "data" / "room_map_stats.json"
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
+
+# Name of the session cookie issued by POST /api/session.
+SESSION_COOKIE = "redrover_session"
 
 
 class MappingSession:
@@ -152,6 +161,9 @@ async def lifespan(app: FastAPI):
         export_interval_ms=config.telemetry.export_interval_ms,
         console_export=config.telemetry.console_export,
         environment=config.telemetry.environment,
+        # This app serves /metrics itself; a second server would just fight
+        # for the port.
+        prometheus_port=0,
     )
     await db.init()
     _update_prometheus_map_metrics(_load_map_stats())
@@ -189,10 +201,30 @@ if STATIC_DIR.is_dir():
 # ---------------------------------------------------------------------------
 
 
-async def require_token(request: Request) -> None:
-    """Guard every endpoint that can change state or move the robot."""
+def _supplied_token(request: Request) -> str:
+    """Pull the token from a header, a bearer scheme, or the session cookie."""
+    supplied = request.headers.get("X-RedRover-Token", "")
+    if not supplied:
+        auth = request.headers.get("Authorization", "")
+        if auth.lower().startswith("bearer "):
+            supplied = auth[7:]
+    if not supplied:
+        supplied = request.cookies.get(SESSION_COOKIE, "")
+    return supplied
+
+
+def is_authenticated(request: Request) -> bool:
+    """Whether this request carries a valid token. Never raises."""
     expected = config.dashboard.auth_token
     if not expected:
+        return False
+    supplied = _supplied_token(request)
+    return bool(supplied) and secrets.compare_digest(supplied, expected)
+
+
+async def require_token(request: Request) -> None:
+    """Guard every endpoint that can change state or move the robot."""
+    if not config.dashboard.auth_token:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
@@ -200,14 +232,7 @@ async def require_token(request: Request) -> None:
                 "REDROVER_DASHBOARD__AUTH_TOKEN to enable them."
             ),
         )
-
-    supplied = request.headers.get("X-RedRover-Token", "")
-    if not supplied:
-        auth = request.headers.get("Authorization", "")
-        if auth.lower().startswith("bearer "):
-            supplied = auth[7:]
-
-    if not supplied or not secrets.compare_digest(supplied, expected):
+    if not is_authenticated(request):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing token",
         )
@@ -226,7 +251,57 @@ async def index(request: Request):
         "patrols": patrols,
         "faults": faults,
         "now": datetime.now(UTC).isoformat(),
+        # The page renders its own controls from these, so the button it shows
+        # is always one the API will actually accept.
+        "control_enabled": bool(config.dashboard.auth_token),
+        "authenticated": is_authenticated(request),
     })
+
+
+@app.post("/api/session")
+async def create_session(request: Request):
+    """Exchange the shared token for a session cookie.
+
+    Lets the browser UI drive the same guarded endpoints as a scripted client
+    without any page script ever holding the token.
+    """
+    expected = config.dashboard.auth_token
+    if not expected:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Control endpoints are disabled: no auth_token configured.",
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    supplied = str(body.get("token", "")) if isinstance(body, dict) else ""
+
+    if not supplied or not secrets.compare_digest(supplied, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token",
+        )
+
+    response = JSONResponse({"status": "unlocked"})
+    response.set_cookie(
+        SESSION_COOKIE,
+        expected,
+        httponly=True,
+        samesite="strict",
+        # Secure is off so the cookie works over plain http on a local network.
+        # Put the dashboard behind TLS and turn this on if it is exposed.
+        secure=False,
+        path="/",
+    )
+    return response
+
+
+@app.post("/api/session/logout")
+async def destroy_session():
+    response = JSONResponse({"status": "locked"})
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return response
 
 
 @app.get("/station/{station_id}", response_class=HTMLResponse)

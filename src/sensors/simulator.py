@@ -15,6 +15,17 @@ from .acoustic import AcousticFaultType, AcousticSample
 from .thermal import ThermalFaultType, ThermalFrame
 from .vibration import FaultType, VibrationSample
 
+# Every draw below goes through this one generator so a simulated patrol can be
+# reproduced. Global ``np.random`` left simulated runs -- and the statistical
+# assertions in the test suite -- unrepeatable, with no way to pin a failure.
+_rng = np.random.default_rng()
+
+
+def set_seed(seed: int | None) -> None:
+    """Seed the simulator. ``None`` restores nondeterministic behaviour."""
+    global _rng
+    _rng = np.random.default_rng(seed)
+
 # =============================================================================
 # VIBRATION SIMULATION
 # =============================================================================
@@ -31,7 +42,7 @@ def generate_normal(
     sig = 0.5 * np.sin(2 * np.pi * shaft_freq * t)
     sig += 0.2 * np.sin(2 * np.pi * 2 * shaft_freq * t)
     sig += 0.1 * np.sin(2 * np.pi * 3 * shaft_freq * t)
-    sig += 0.05 * np.random.randn(len(t))
+    sig += 0.05 * _rng.standard_normal(len(t))
 
     return sig.astype(np.float32)
 
@@ -73,7 +84,7 @@ def generate_bearing_fault(
         resonance = np.sin(2 * np.pi * 3000 * (t[mask] - imp_t))
         sig[mask] += severity * 5.0 * decay * resonance
 
-    sig += severity * 0.3 * np.random.randn(len(t))
+    sig += severity * 0.3 * _rng.standard_normal(len(t))
 
     return sig.astype(np.float32)
 
@@ -91,7 +102,7 @@ def generate_misalignment(
     sig = 0.5 * np.sin(2 * np.pi * shaft_freq * t)
     sig += (0.3 + severity * 0.8) * np.sin(2 * np.pi * 2 * shaft_freq * t)
     sig += (0.1 + severity * 0.4) * np.sin(2 * np.pi * 3 * shaft_freq * t)
-    sig += 0.05 * np.random.randn(len(t))
+    sig += 0.05 * _rng.standard_normal(len(t))
 
     return sig.astype(np.float32)
 
@@ -108,7 +119,7 @@ def generate_imbalance(
 
     sig = (0.5 + severity * 2.0) * np.sin(2 * np.pi * shaft_freq * t)
     sig += 0.15 * np.sin(2 * np.pi * 2 * shaft_freq * t)
-    sig += 0.05 * np.random.randn(len(t))
+    sig += 0.05 * _rng.standard_normal(len(t))
 
     return sig.astype(np.float32)
 
@@ -127,10 +138,10 @@ def generate_looseness(
 
     for i in range(1, 8):
         amplitude = (0.3 + severity * 0.5) / i
-        sig += amplitude * np.sin(2 * np.pi * i * shaft_freq * t + np.random.rand() * 2 * np.pi)
+        sig += amplitude * np.sin(2 * np.pi * i * shaft_freq * t + _rng.random() * 2 * np.pi)
 
     sig += severity * 0.4 * np.sin(2 * np.pi * 0.5 * shaft_freq * t)
-    sig += 0.1 * np.random.randn(len(t))
+    sig += 0.1 * _rng.standard_normal(len(t))
 
     return sig.astype(np.float32)
 
@@ -179,7 +190,7 @@ def generate_acoustic_normal(
     sig = 0.02 * np.sin(2 * np.pi * 60 * t)
     sig += 0.01 * np.sin(2 * np.pi * 120 * t)
     # Broadband ambient
-    sig += 0.005 * np.random.randn(len(t))
+    sig += 0.005 * _rng.standard_normal(len(t))
     return sig.astype(np.float32)
 
 
@@ -199,7 +210,7 @@ def generate_air_leak(
     sig = generate_acoustic_normal(sample_rate, duration)
 
     # Ultrasonic hissing: band-limited noise in 20-40 kHz
-    noise = np.random.randn(len(t)).astype(np.float32)
+    noise = _rng.standard_normal(len(t)).astype(np.float32)
     from scipy import signal as sp_signal
     sos = sp_signal.butter(4, [20000, 40000], btype="bandpass", fs=sample_rate, output="sos")
     leak_noise = sp_signal.sosfilt(sos, noise)
@@ -226,10 +237,10 @@ def generate_electrical_arcing(
     # Random bursts
     n_bursts = int(5 + severity * 20)
     for _ in range(n_bursts):
-        burst_start = np.random.uniform(0, duration - 0.01)
-        burst_duration = np.random.uniform(0.001, 0.005)
+        burst_start = _rng.uniform(0, duration - 0.01)
+        burst_duration = _rng.uniform(0.001, 0.005)
         mask = (t >= burst_start) & (t < burst_start + burst_duration)
-        burst = severity * np.random.uniform(0.5, 2.0) * np.random.randn(int(mask.sum()))
+        burst = severity * _rng.uniform(0.5, 2.0) * _rng.standard_normal(int(mask.sum()))
         sig[mask] += burst.astype(np.float32)
 
     return sig.astype(np.float32)
@@ -249,7 +260,7 @@ def generate_metal_friction(
     sig = generate_acoustic_normal(sample_rate, duration)
 
     # Friction: harmonic series at high frequency
-    base_freq = 8000 + np.random.uniform(-1000, 1000)
+    base_freq = 8000 + _rng.uniform(-1000, 1000)
     for harmonic in range(1, 5):
         freq = base_freq * harmonic
         if freq < sample_rate / 2:
@@ -310,7 +321,7 @@ def generate_thermal_normal(
             frame[y, x] += max(0, (machine_temp - ambient) * np.exp(-dist / 8))
 
     # Small noise
-    frame += np.random.randn(h, w).astype(np.float32) * 0.5
+    frame += _rng.standard_normal((h, w)).astype(np.float32) * 0.5
 
     return frame
 
@@ -327,8 +338,8 @@ def generate_thermal_hotspot(
 
     h, w = resolution
     # Place hotspot at a random but plausible location
-    hy = np.random.randint(h // 4, 3 * h // 4)
-    hx = np.random.randint(w // 4, 3 * w // 4)
+    hy = _rng.integers(h // 4, 3 * h // 4)
+    hx = _rng.integers(w // 4, 3 * w // 4)
 
     actual_temp = machine_temp + severity * (hotspot_temp - machine_temp)
 

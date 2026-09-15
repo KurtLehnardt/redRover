@@ -39,6 +39,21 @@ def _no_live_llm(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _deterministic_simulator():
+    """Pin the simulator's RNG so statistical assertions are reproducible.
+
+    The generators previously drew from global ``np.random``, which made every
+    signal-shape assertion in this suite a coin flip with no way to reproduce a
+    failure.
+    """
+    from src.sensors import simulator
+
+    simulator.set_seed(20260914)
+    yield
+    simulator.set_seed(None)
+
+
+@pytest.fixture(autouse=True)
 def _reset_globals():
     """Keep process-wide singletons from leaking between tests."""
     reset_alert_manager()

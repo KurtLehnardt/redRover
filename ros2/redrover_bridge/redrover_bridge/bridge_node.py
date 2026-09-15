@@ -262,13 +262,7 @@ class RedRoverBridge(Node):
             )
             lateral_mm_s = 0
 
-        self._submit(
-            self.rover._send(
-                wire.MsgType.DRIVE,
-                wire.drive_payload(linear_mm_s, angular_mrad_s, lateral_mm_s),
-                expect_ack=False,
-            )
-        )
+        self._submit(self.rover.drive(linear_mm_s, angular_mrad_s, lateral_mm_s))
 
     def _on_estop(self, request, response):
         if request.data:

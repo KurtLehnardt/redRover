@@ -1,6 +1,8 @@
 """Tests for scheduler and alerting modules."""
 
 
+from datetime import time
+
 import pytest
 
 from src.ai.fusion import FusedDiagnosis, ModalityResult, OverallHealth
@@ -8,18 +10,58 @@ from src.alerting import AlertManager
 from src.scheduler import _in_quiet_hours
 
 # === Quiet Hours Logic ===
+#
+# These replace two tests that asserted nothing: one was
+# `assert _in_quiet_hours.__doc__ is None or True` -- a tautology -- and the
+# other was a bare `pass`. The overnight wrap is the scheduler's only real
+# branch, and it sat behind two green checkmarks untested.
 
-def test_quiet_hours_overnight_inside():
-    """22:00-06:00 window, test at 23:00 (inside)."""
-    # We can't easily mock datetime.now(), but we can test the logic
-    assert _in_quiet_hours.__doc__ is None or True  # function exists
+
+@pytest.mark.parametrize(
+    "at,expected",
+    [
+        ("22:00", True),   # exactly the start
+        ("23:30", True),   # before midnight
+        ("00:00", True),   # midnight itself
+        ("03:00", True),   # after midnight
+        ("06:00", True),   # exactly the end
+        ("06:01", False),  # just past
+        ("12:00", False),  # the middle of the working day
+        ("21:59", False),  # just before
+    ],
+)
+def test_quiet_hours_overnight_window(at, expected):
+    """22:00-06:00 wraps past midnight."""
+    assert _in_quiet_hours("22:00", "06:00", time.fromisoformat(at)) is expected
 
 
-def test_quiet_hours_daytime_window():
-    """08:00-17:00 window, logic test."""
-    # Daytime window: start < end
-    # This tests the branch where start <= end
-    pass
+@pytest.mark.parametrize(
+    "at,expected",
+    [
+        ("08:00", True),
+        ("12:30", True),
+        ("17:00", True),
+        ("07:59", False),
+        ("17:01", False),
+        ("23:00", False),
+        ("02:00", False),
+    ],
+)
+def test_quiet_hours_daytime_window(at, expected):
+    """08:00-17:00 does not wrap, so the simple comparison applies."""
+    assert _in_quiet_hours("08:00", "17:00", time.fromisoformat(at)) is expected
+
+
+def test_quiet_hours_defaults_to_now():
+    """Called without a time it still answers, using the local clock."""
+    assert _in_quiet_hours("00:00", "23:59") is True
+    assert isinstance(_in_quiet_hours("22:00", "06:00"), bool)
+
+
+def test_quiet_hours_zero_length_window():
+    """A start equal to the end admits exactly that instant."""
+    assert _in_quiet_hours("03:00", "03:00", time.fromisoformat("03:00")) is True
+    assert _in_quiet_hours("03:00", "03:00", time.fromisoformat("03:01")) is False
 
 
 # === AlertManager ===

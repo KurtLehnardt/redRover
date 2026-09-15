@@ -49,12 +49,23 @@ public:
 
     bool read(SensorSample& out) override {
         out.channels = 1;
-        out.values[0] = count_;
+        out.values[0] = count();
         return true;
     }
 
-    int32_t count() const { return count_; }
-    void reset() { count_ = 0; }
+    // Guarded: onEdge() may run from an ISR, and a 32-bit load on AVR is four
+    // instructions. An interrupt between them returns a count that was never
+    // real -- typically off by 2^8 or 2^16, which reads as a wheel that
+    // teleported.
+    int32_t count() const {
+        CriticalSection guard(hal_);
+        return count_;
+    }
+
+    void reset() {
+        CriticalSection guard(hal_);
+        count_ = 0;
+    }
 
 private:
     uint8_t encodeState() const {

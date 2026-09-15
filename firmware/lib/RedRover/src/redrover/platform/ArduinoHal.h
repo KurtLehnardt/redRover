@@ -55,6 +55,39 @@ public:
     uint32_t pulseInMicros(uint8_t pin, bool level, uint32_t timeoutUs) override {
         return pulseIn(pin, level ? HIGH : LOW, timeoutUs);
     }
+
+    void enterCritical() override {
+        // Depth-counted rather than probing a hardware flag: CMSIS intrinsics
+        // like __get_PRIMASK are not declared on every ARM Arduino core
+        // (Teensy's, for one), and a portability layer cannot depend on them.
+        if (depth_++ == 0) {
+#if defined(__AVR__)
+            // Saving SREG restores the interrupt bit exactly, so this stays
+            // correct even if it is ever reached with interrupts already off.
+            savedStatus_ = SREG;
+#endif
+            noInterrupts();
+        }
+    }
+
+    void exitCritical() override {
+        if (depth_ == 0) {
+            return;  // unbalanced exit; never turn interrupts on speculatively
+        }
+        if (--depth_ == 0) {
+#if defined(__AVR__)
+            SREG = savedStatus_;
+#else
+            interrupts();
+#endif
+        }
+    }
+
+private:
+    uint8_t depth_ = 0;
+#if defined(__AVR__)
+    uint8_t savedStatus_ = 0;
+#endif
 };
 
 }  // namespace redrover
