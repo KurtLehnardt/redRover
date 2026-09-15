@@ -471,22 +471,31 @@ def _update_prometheus_map_metrics(stats: dict) -> None:
 
 
 def _persist_map(grid: OccupancyGrid, speed: int, duration: float, room_bounds: float) -> dict:
-    stats = grid.stats()
-    title = (
-        f"Room Map - {stats['free']} free, {stats['wall']} wall cells "
-        f"({stats['coverage_pct']:.1f}% coverage, {stats['area_free_m2']:.2f} m2 explored)"
-    )
-    _MAP_IMAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    grid.save_png(str(_MAP_IMAGE_PATH), title=title)
+    """Persist a mapping run, data before picture.
 
+    Rendering used to come first, so a missing matplotlib lost the whole run
+    *and* reported a completed mapping session as an error.
+    """
+    stats = grid.stats()
     stats["timestamp"] = datetime.now(UTC).isoformat()
     stats["status"] = "complete"
     stats["duration_requested"] = duration
     stats["speed"] = speed
     stats["room_bounds"] = room_bounds
     stats["path_points"] = len(grid.path)
+
+    _MAP_STATS_PATH.parent.mkdir(parents=True, exist_ok=True)
     _MAP_STATS_PATH.write_text(json.dumps(stats, indent=2))
     _update_prometheus_map_metrics(stats)
+
+    title = (
+        f"Room Map - {stats['free']} free, {stats['wall']} wall cells "
+        f"({stats['coverage_pct']:.1f}% coverage, {stats['area_free_m2']:.2f} m2 explored)"
+    )
+    try:
+        grid.save_png(str(_MAP_IMAGE_PATH), title=title)
+    except RuntimeError as exc:
+        logger.warning("map image not written: %s", exc)
     return stats
 
 

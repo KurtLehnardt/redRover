@@ -56,14 +56,14 @@ def parse_args() -> argparse.Namespace:
 
 
 def save_results(grid: OccupancyGrid, output_path: str, args: argparse.Namespace) -> dict:
-    """Write the map PNG and the stats JSON; returns the stats."""
-    stats = grid.stats()
-    title = (
-        f"Room Map - {stats['free']} free, {stats['wall']} wall cells "
-        f"({stats['coverage_pct']:.1f}% coverage, {stats['area_free_m2']:.2f} m2 explored)"
-    )
-    grid.save_png(output_path, title=title)
+    """Persist the mapping run; returns the stats.
 
+    The measurements are written **before** the picture is drawn. Rendering
+    needs matplotlib, which is optional; doing it first meant a missing
+    plotting library threw away an entire mapping run -- the robot drove the
+    full duration and produced nothing at all.
+    """
+    stats = grid.stats()
     stats["timestamp"] = datetime.now(UTC).isoformat()
     stats["status"] = "complete"
     stats["duration_requested"] = args.duration
@@ -72,9 +72,22 @@ def save_results(grid: OccupancyGrid, output_path: str, args: argparse.Namespace
     stats["path_points"] = len(grid.path)
 
     stats_path = os.path.splitext(output_path)[0] + "_stats.json"
+    os.makedirs(os.path.dirname(stats_path) or ".", exist_ok=True)
     with open(stats_path, "w") as f:
         json.dump(stats, f, indent=2)
     stats["_stats_path"] = stats_path
+
+    title = (
+        f"Room Map - {stats['free']} free, {stats['wall']} wall cells "
+        f"({stats['coverage_pct']:.1f}% coverage, {stats['area_free_m2']:.2f} m2 explored)"
+    )
+    try:
+        grid.save_png(output_path, title=title)
+        stats["_image_path"] = output_path
+    except RuntimeError as exc:
+        # The data is already safe; the image is a convenience.
+        logger.warning("map image not written: %s", exc)
+        stats["_image_path"] = None
     return stats
 
 
@@ -147,7 +160,7 @@ async def main() -> None:
         print(f"  Unknown cells:  {stats['unknown']}")
         print(f"  Coverage:       {stats['coverage_pct']:.1f}%")
         print(f"  Area explored:  {stats['area_free_m2']:.2f} m2")
-        print(f"  Map saved to:   {output_path}")
+        print(f"  Map saved to:   {stats['_image_path'] or '(no image: matplotlib missing)'}")
         print(f"  Stats saved to: {stats['_stats_path']}")
 
 

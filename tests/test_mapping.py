@@ -123,3 +123,85 @@ async def test_request_stop_ends_the_loop():
     explorer.request_stop()
     await asyncio.wait_for(task, timeout=5.0)
     assert not explorer.running
+
+
+# === A mapping run's data must survive a missing renderer ===
+
+
+def test_stats_are_written_even_when_matplotlib_is_missing(tmp_path, monkeypatch):
+    """Regression: rendering ran before the data was persisted.
+
+    A missing matplotlib threw away an entire mapping run — the robot drove the
+    full duration and produced nothing at all. The picture is a convenience;
+    the measurements are the point.
+    """
+    import argparse
+    import json
+
+    from scripts.explore_map import save_results
+
+    grid = OccupancyGrid(width_m=2.0, height_m=2.0, cell_cm=10)
+    grid.record_pose(0.0, 0.0)
+    grid.record_pose(0.5, 0.0)
+    grid.mark_wall(0.6, 0.0)
+
+    def _no_matplotlib(*_args, **_kwargs):
+        raise RuntimeError("matplotlib is required to save a map image")
+
+    monkeypatch.setattr(OccupancyGrid, "save_png", _no_matplotlib)
+
+    output = tmp_path / "room_map.png"
+    args = argparse.Namespace(duration=30.0, speed=60, room_bounds=2.0)
+    stats = save_results(grid, str(output), args)
+
+    stats_path = tmp_path / "room_map_stats.json"
+    assert stats_path.exists(), "the run's data must survive"
+    saved = json.loads(stats_path.read_text())
+    assert saved["free"] > 0
+    assert saved["wall"] == 1
+    assert saved["status"] == "complete"
+    # And the caller can tell there is no image.
+    assert stats["_image_path"] is None
+
+
+def test_stats_and_image_are_both_written_when_rendering_works(tmp_path):
+    import argparse
+    import json
+
+    pytest.importorskip("matplotlib")
+    from scripts.explore_map import save_results
+
+    grid = OccupancyGrid(width_m=2.0, height_m=2.0, cell_cm=10)
+    grid.record_pose(0.0, 0.0)
+
+    output = tmp_path / "room_map.png"
+    args = argparse.Namespace(duration=5.0, speed=60, room_bounds=2.0)
+    stats = save_results(grid, str(output), args)
+
+    assert output.exists()
+    assert stats["_image_path"] == str(output)
+    assert json.loads((tmp_path / "room_map_stats.json").read_text())["status"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_map_persist_survives_a_missing_renderer(tmp_path, monkeypatch):
+    """A completed mapping session used to report as an error."""
+    import json
+
+    from src.dashboard import app as dashboard
+
+    monkeypatch.setattr(dashboard, "_MAP_STATS_PATH", tmp_path / "stats.json")
+    monkeypatch.setattr(dashboard, "_MAP_IMAGE_PATH", tmp_path / "map.png")
+
+    def _no_matplotlib(*_args, **_kwargs):
+        raise RuntimeError("matplotlib is required to save a map image")
+
+    monkeypatch.setattr(OccupancyGrid, "save_png", _no_matplotlib)
+
+    grid = OccupancyGrid(width_m=2.0, height_m=2.0, cell_cm=10)
+    grid.record_pose(0.0, 0.0)
+
+    stats = dashboard._persist_map(grid, speed=50, duration=10.0, room_bounds=1.0)
+
+    assert stats["status"] == "complete"
+    assert json.loads((tmp_path / "stats.json").read_text())["free"] > 0
