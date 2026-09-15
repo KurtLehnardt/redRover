@@ -42,7 +42,8 @@ from src.ai.fusion import FusionAnalyzer, OverallHealth
 from src.alerting import get_alert_manager
 from src.config import load_config
 from src.database import Database, DiagnosisRecord
-from src.rover.controller import RoverController, Waypoint
+from src.rover.backends import create_rover
+from src.rover.controller import Waypoint
 from src.sensors.simulator import (
     generate_acoustic_sample,
 )
@@ -241,13 +242,10 @@ async def run_patrol(args: argparse.Namespace) -> None:
     simulate = args.simulate
     speed_normalized = args.speed / 255.0  # RoverController expects 0.0-1.0
 
-    rover = RoverController(
-        connection=config.rover.connection,
-        speed=speed_normalized,
-        simulate=simulate,
-        max_speed_mps=config.rover.max_speed_mps,
-        max_drive_seconds=config.rover.max_drive_seconds,
-    )
+    # The factory picks the backend from [rover].connection, so this script
+    # works with a firmware rover as well as an RVR+.
+    config.rover.speed = speed_normalized
+    rover = create_rover(config, simulate=simulate)
 
     # -- Fusion analyzer ----------------------------------------------------
     ai_model = config.ai.model

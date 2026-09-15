@@ -9,7 +9,8 @@ import time
 
 import numpy as np
 
-from ..rover.controller import RoverController, heading_difference, heading_to_vector
+from ..rover.backends.base import RoverBackend
+from ..rover.controller import heading_difference, heading_to_vector
 from .occupancy import OccupancyGrid
 
 logger = logging.getLogger(__name__)
@@ -83,7 +84,7 @@ class RoomExplorer:
 
     def __init__(
         self,
-        rover: RoverController,
+        rover: RoverBackend,
         grid: OccupancyGrid,
         speed: int = 60,
         duration: float = 120.0,

@@ -29,7 +29,8 @@ from .config import Settings, load_config
 from .database import Database, DiagnosisRecord
 from .drone.controller import DroneController, DroneType
 from .drone.orchestrator import DroneRoverOrchestrator
-from .rover.controller import PatrolRoute, RoverController, Waypoint
+from .rover.backends import create_rover
+from .rover.controller import PatrolRoute, Waypoint
 from .sensors.acoustic import AcousticFaultType
 from .sensors.sources import SensorSuite, SourceUnavailable, build_sensor_suite
 from .sensors.thermal import ThermalFaultType
@@ -177,14 +178,10 @@ async def run_patrol(
         "redrover.sensor.failures", description="Sensor read failures by type",
     )
 
-    rover = RoverController(
-        connection=config.rover.connection,
-        speed=config.rover.speed,
-        simulate=simulate,
-        max_speed_mps=config.rover.max_speed_mps,
-        max_drive_seconds=config.rover.max_drive_seconds,
-        time_scale=config.simulation.time_scale,
-    )
+    # The backend is chosen by [rover].connection, so a Sphero RVR+, a
+    # firmware rover over USB serial, and the simulator all run this same
+    # patrol without a branch anywhere below here.
+    rover = create_rover(config, simulate=simulate)
     fusion = FusionAnalyzer(model=config.ai.model, ollama_host=config.ai.ollama_host)
     drone = DroneController(
         drone_type=DroneType.SIMULATED if simulate else DroneType.TELLO,
@@ -213,6 +210,8 @@ async def run_patrol(
     logger.info("redRover Multi-Modal Patrol — %s", datetime.now(UTC).isoformat())
     logger.info("Route: %s (%d stations)", route.name, total_stations)
     logger.info("Mode: %s", "SIMULATED" if simulate else "LIVE HARDWARE")
+    logger.info("Rover: %s (%s)", config.rover.connection, rover.capabilities.name
+                if hasattr(rover, "capabilities") else "rvr+")
     logger.info("Sensors: %s", suite.describe())
     logger.info("=" * 70)
 

@@ -49,3 +49,29 @@ jobs:
 
       - name: Run tests
         run: pytest -v --tb=short --timeout=120
+
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PlatformIO
+        run: pip install platformio
+      - name: Build firmware for every supported board
+        run: pio run -d firmware
+      - name: Run native firmware unit tests
+        run: pio test -d firmware -e native
+
+      - name: Golden wire vectors match the C++ implementation
+        # The Python host mirrors the protocol by hand. Regenerating the
+        # vectors here means a change to the C++ side that breaks byte
+        # compatibility fails CI instead of failing on a robot.
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Ifirmware/lib/RedRover/src \
+            firmware/lib/RedRover/src/Framing.cpp \
+            firmware/lib/RedRover/src/Protocol.cpp \
+            firmware/tools/gen_vectors.cpp -o /tmp/gen_vectors
+          /tmp/gen_vectors > /tmp/wire_vectors.json
+          diff -u tests/data/wire_vectors.json /tmp/wire_vectors.json

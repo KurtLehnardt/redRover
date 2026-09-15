@@ -31,7 +31,7 @@ from ..alerting import get_alert_manager
 from ..config import load_config
 from ..database import Database
 from ..mapping import OccupancyGrid, RoomExplorer
-from ..rover.controller import RoverController
+from ..rover.backends import create_rover
 from ..telemetry import init_telemetry, shutdown_telemetry
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ class MappingSession:
         self.last_error = ""
         self._task: asyncio.Task | None = None
         self._explorer: RoomExplorer | None = None
-        self._rover: RoverController | None = None
+        self._rover = None  # RoverBackend, whichever the config selected
         self._lock = asyncio.Lock()
 
     @property
@@ -102,12 +102,7 @@ class MappingSession:
         grid = OccupancyGrid(
             width_m=room_bounds * 2, height_m=room_bounds * 2, cell_cm=5,
         )
-        rover = RoverController(
-            connection=config.rover.connection,
-            simulate=simulate,
-            max_speed_mps=config.rover.max_speed_mps,
-            max_drive_seconds=config.rover.max_drive_seconds,
-        )
+        rover = create_rover(config, simulate=simulate)
         explorer = RoomExplorer(
             rover=rover, grid=grid, speed=speed, duration=duration,
             room_bounds_m=room_bounds, simulate=simulate,

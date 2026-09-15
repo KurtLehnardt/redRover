@@ -1,6 +1,13 @@
 [rover]
-# Connection type: "uart" for Jetson, "ble" for laptop, "serial" for firmware rovers
+# Connection type:
+#   "ble"    Sphero RVR+ over Bluetooth
+#   "uart"   Sphero RVR+ over the UART expansion port (Jetson / Raspberry Pi)
+#   "serial" any Arduino / ESP32 / RP2040 / Teensy running firmware/
 connection = "ble"
+# Serial port for connection = "serial". Empty auto-detects the first
+# usbmodem/usbserial/ttyACM/ttyUSB/COM device.
+serial_port = ""
+serial_baud = 115200
 # Patrol speed (0.0 - 1.0)
 speed = 0.3
 # Time to dwell at each machine station (seconds)
@@ -25,8 +32,12 @@ measurement_duration = 5
 # >= 2 kHz. Bearing verdicts are suppressed automatically below that rate.
 # For real bearing work use a firmware rover (see firmware/README.md) or a
 # dedicated USB accelerometer.
+# Use "firmware" with connection = "serial" to read a real kHz-rate
+# accelerometer, which is what makes bearing analysis possible.
 sensor_type = "imu"
 imu_period_ms = 20
+# Seconds of accelerometer stream collected per firmware measurement.
+firmware_capture_seconds = 2.0
 
 # Acoustic capture. Ultrasonic leak detection (20-48 kHz) needs >= 96000 Hz;
 # most laptop microphones top out at 48000 and the ultrasonic band is then

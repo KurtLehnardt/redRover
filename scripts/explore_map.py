@@ -28,7 +28,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from src.config import load_config  # noqa: E402
 from src.mapping import OccupancyGrid, RoomExplorer  # noqa: E402
-from src.rover.controller import RoverController  # noqa: E402
+from src.rover.backends import create_rover  # noqa: E402
 
 logger = logging.getLogger("redRover.explore_map")
 
@@ -86,12 +86,10 @@ async def main() -> None:
         height_m=args.room_bounds * 2,
         cell_cm=args.cell_size,
     )
-    rover = RoverController(
-        connection=config.rover.connection,
-        simulate=args.simulate,
-        max_speed_mps=config.rover.max_speed_mps,
-        max_drive_seconds=config.rover.max_drive_seconds,
-    )
+    # Through the factory, so [rover].connection = "serial" maps a firmware
+    # rover instead of handing "serial" to the Sphero controller, which
+    # rejects it.
+    rover = create_rover(config, simulate=args.simulate)
     explorer = RoomExplorer(
         rover=rover,
         grid=grid,
