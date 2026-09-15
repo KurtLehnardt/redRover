@@ -21,12 +21,9 @@ constexpr uint8_t kBatteryPin = A0;
 redrover::ArduinoHal hal;
 redrover::SerialTransport transport(Serial);
 
-redrover::DifferentialGeometry geometry = {
-    /*trackWidthMm=*/150,
-    // Measure this: full duty for five seconds, distance / 5.
-    /*maxWheelMmPerS=*/450,
-    /*minEffectiveDuty=*/40,
-};
+// trackWidthMm, maxWheelMmPerS, minEffectiveDuty.
+// Measure maxWheelMmPerS: full duty for five seconds, distance / 5.
+redrover::DifferentialGeometry geometry(150, 450, 40);
 
 redrover::DifferentialDrive drive(
     hal,

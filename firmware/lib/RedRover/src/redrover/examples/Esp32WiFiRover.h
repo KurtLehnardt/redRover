@@ -22,7 +22,7 @@ namespace {
 redrover::ArduinoHal hal;
 redrover::UdpTransport transport(4242);
 
-redrover::DifferentialGeometry geometry = {200, 700, 30};
+redrover::DifferentialGeometry geometry(200, 700, 30);
 redrover::DifferentialDrive drive(hal,
                                   redrover::MotorChannel(25, 26, 27),
                                   redrover::MotorChannel(32, 33, 14),

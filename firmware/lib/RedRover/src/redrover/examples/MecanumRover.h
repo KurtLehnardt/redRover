@@ -13,12 +13,8 @@ namespace {
 redrover::ArduinoHal hal;
 redrover::SerialTransport transport(Serial);
 
-redrover::MecanumGeometry geometry = {
-    /*trackWidthMm=*/220,
-    /*wheelBaseMm=*/180,
-    /*maxWheelMmPerS=*/600,
-    /*minEffectiveDuty=*/35,
-};
+// trackWidthMm, wheelBaseMm, maxWheelMmPerS, minEffectiveDuty.
+redrover::MecanumGeometry geometry(220, 180, 600, 35);
 
 redrover::MecanumDrive drive(
     hal,
@@ -29,10 +25,7 @@ redrover::MecanumDrive drive(
     geometry);
 
 // ADXL335 on a 10-bit ADC: 330 mV/g over a 5 V reference is ~68 counts/g.
-redrover::AnalogAccelCalibration accelCal = {
-    /*zeroG=*/{512, 512, 512},
-    /*countsPerG=*/{68, 68, 68},
-};
+redrover::AnalogAccelCalibration accelCal(512, 68);
 redrover::AnalogAccelerometer accel(hal, A0, A1, A2, accelCal, "vibration", 1000);
 
 redrover::QuadratureEncoder leftEncoder(hal, 18, 19, "left_encoder");

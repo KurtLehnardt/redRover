@@ -19,6 +19,13 @@ struct DifferentialGeometry {
     // between 1 and this value are lifted to it rather than being sent as a
     // stall.
     uint8_t minEffectiveDuty = 0;
+
+    // Explicit constructors: the Arduino AVR core builds as gnu++11, where a
+    // struct carrying default member initialisers is not an aggregate and
+    // brace initialisation does not compile.
+    DifferentialGeometry() {}
+    DifferentialGeometry(uint16_t trackMm, uint16_t maxWheel, uint8_t minDuty = 0)
+        : trackWidthMm(trackMm), maxWheelMmPerS(maxWheel), minEffectiveDuty(minDuty) {}
 };
 
 class DifferentialDrive : public IDriveBase {

@@ -13,6 +13,14 @@ struct MecanumGeometry {
     uint16_t wheelBaseMm = 200;    // front-rear wheel separation
     uint16_t maxWheelMmPerS = 500;
     uint8_t minEffectiveDuty = 0;
+
+    // See the note in DifferentialDrive.h: gnu++11 cores reject brace
+    // initialisation of a struct with default member initialisers.
+    MecanumGeometry() {}
+    MecanumGeometry(uint16_t trackMm, uint16_t baseMm, uint16_t maxWheel,
+                    uint8_t minDuty = 0)
+        : trackWidthMm(trackMm), wheelBaseMm(baseMm), maxWheelMmPerS(maxWheel),
+          minEffectiveDuty(minDuty) {}
 };
 
 class MecanumDrive : public IDriveBase {

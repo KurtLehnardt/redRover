@@ -15,6 +15,15 @@ struct AnalogAccelCalibration {
     uint16_t zeroG[3] = {512, 512, 512};
     // Sensitivity in ADC counts per g.
     uint16_t countsPerG[3] = {102, 102, 102};
+
+    AnalogAccelCalibration() {}
+    // Most boards are calibrated identically on all three axes.
+    AnalogAccelCalibration(uint16_t zero, uint16_t perG) {
+        for (uint8_t axis = 0; axis < 3; ++axis) {
+            zeroG[axis] = zero;
+            countsPerG[axis] = perG;
+        }
+    }
 };
 
 class AnalogAccelerometer : public SensorBase {
