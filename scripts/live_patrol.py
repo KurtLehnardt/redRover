@@ -27,7 +27,7 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 # ---------------------------------------------------------------------------
 # Path setup — allow `from src.…` imports when running as a script
@@ -38,15 +38,24 @@ sys.path.insert(0, _PROJECT_ROOT)
 
 import numpy as np
 
-from src.rover.controller import RoverController, Waypoint, RoverState
-from src.sensors.vibration import VibrationSample, extract_features
-from src.sensors.acoustic import AcousticSample
-from src.sensors.simulator import generate_sample as sim_vibration_sample
 from src.ai.fusion import FusionAnalyzer, OverallHealth
-from src.database import Database
+from src.alerting import get_alert_manager
 from src.config import load_config
-from src.telemetry import init_telemetry, get_tracer, get_meter
-from src.alerting import AlertManager
+from src.database import Database, DiagnosisRecord
+from src.rover.controller import RoverController, Waypoint
+from src.sensors.simulator import (
+    generate_acoustic_sample,
+)
+from src.sensors.simulator import (
+    generate_sample as sim_vibration_sample,
+)
+from src.sensors.sources import (
+    MicrophoneAcousticSource,
+    RoverIMUVibrationSource,
+    SourceUnavailable,
+)
+from src.sensors.vibration import extract_features
+from src.telemetry import get_meter, init_telemetry, shutdown_telemetry
 
 # ---------------------------------------------------------------------------
 # ANSI colour helpers
@@ -134,57 +143,25 @@ def _say(message: str) -> None:
 # Microphone capture
 # ---------------------------------------------------------------------------
 
-def _record_microphone(duration: float = 3.0, sample_rate: int = 44100) -> np.ndarray:
-    """Record audio from the Mac's default microphone using sounddevice.
-
-    Returns a 1-D float32 numpy array.
-    """
-    try:
-        import sounddevice as sd
-    except ImportError:
-        logger.warning("sounddevice not installed — generating silence as placeholder")
-        return np.zeros(int(duration * sample_rate), dtype=np.float32)
-
-    frames = int(duration * sample_rate)
-    print(f"  {_CYAN}[MIC]{_RESET} Recording {duration}s @ {sample_rate} Hz ...")
-    try:
-        audio = sd.rec(frames, samplerate=sample_rate, channels=1, dtype="float32")
-        sd.wait()
-        signal_1d = audio.flatten()
-        rms = float(np.sqrt(np.mean(signal_1d ** 2)))
-        peak = float(np.max(np.abs(signal_1d)))
-        print(f"  {_CYAN}[MIC]{_RESET} Captured: RMS={rms:.6f}  Peak={peak:.6f}")
-        return signal_1d
-    except Exception as e:
-        logger.warning("Microphone capture failed: %s — using silence", e)
-        return np.zeros(int(duration * sample_rate), dtype=np.float32)
-
-
 # ---------------------------------------------------------------------------
 # Ollama health check
 # ---------------------------------------------------------------------------
 
 async def _check_ollama(host: str, model: str) -> bool:
     """Return True if Ollama is reachable and the model is available."""
+    from src.ai.ollama import OllamaClient
+
+    client = OllamaClient(host=host, model=model)
     try:
-        import httpx
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{host}/api/tags")
-            if resp.status_code != 200:
-                return False
-            tags = resp.json()
-            available = [m.get("name", "") for m in tags.get("models", [])]
-            # Match by prefix (e.g. "gemma3" matches "gemma3:latest")
-            found = any(model in name for name in available)
-            if not found:
-                logger.warning(
-                    "Model '%s' not found in Ollama. Available: %s",
-                    model, ", ".join(available) or "(none)",
-                )
-            return found
-    except Exception as e:
-        logger.warning("Ollama health-check failed: %s", e)
-        return False
+        present, available = await client.available()
+    finally:
+        await client.aclose()
+    if not present:
+        logger.warning(
+            "Model '%s' not found in Ollama. Available: %s",
+            model, ", ".join(available) or "(none)",
+        )
+    return present
 
 
 # ---------------------------------------------------------------------------
@@ -246,8 +223,9 @@ async def run_patrol(args: argparse.Namespace) -> None:
         endpoint=config.telemetry.endpoint or None,
         enabled=config.telemetry.enabled,
         export_interval_ms=config.telemetry.export_interval_ms,
+        console_export=config.telemetry.console_export,
+        environment=config.telemetry.environment,
     )
-    tracer = get_tracer("redrover.live_patrol")
     meter = get_meter("redrover.live_patrol")
     station_counter = meter.create_counter("redrover.patrol.stations_visited")
     fault_counter = meter.create_counter("redrover.patrol.faults_detected")
@@ -264,9 +242,11 @@ async def run_patrol(args: argparse.Namespace) -> None:
     speed_normalized = args.speed / 255.0  # RoverController expects 0.0-1.0
 
     rover = RoverController(
-        connection="ble",
+        connection=config.rover.connection,
         speed=speed_normalized,
         simulate=simulate,
+        max_speed_mps=config.rover.max_speed_mps,
+        max_drive_seconds=config.rover.max_drive_seconds,
     )
 
     # -- Fusion analyzer ----------------------------------------------------
@@ -275,7 +255,7 @@ async def run_patrol(args: argparse.Namespace) -> None:
     fusion = FusionAnalyzer(model=ai_model, ollama_host=ollama_host)
 
     # -- Alert manager ------------------------------------------------------
-    alert_mgr = AlertManager()
+    alert_mgr = get_alert_manager(config)
 
     # -- Graceful shutdown state --------------------------------------------
     shutdown_event = asyncio.Event()
@@ -346,7 +326,7 @@ async def run_patrol(args: argparse.Namespace) -> None:
         _info(f"{wp.station_id}  {wp.name:12s}  heading={wp.heading:>5.0f}deg  ({wp.x:.1f}, {wp.y:.1f})")
 
     # Start patrol in DB
-    patrol_started = datetime.now(timezone.utc).isoformat()
+    patrol_started = datetime.now(UTC).isoformat()
     patrol_id = await db.start_patrol(route_name="live_patrol", started_at=patrol_started)
     _status("Patrol ID", str(patrol_id))
 
@@ -377,15 +357,13 @@ async def run_patrol(args: argparse.Namespace) -> None:
         await rover.set_leds(0, 0, 255)  # Blue = navigating
         _say(f"Navigating to station {waypoint.name}")
 
+        # drive_to derives the leg duration from rover.max_speed_mps and
+        # stops the motors itself; sleeping again here used to double the leg.
         await rover.drive_to(waypoint)
-        if not simulate:
-            # The controller handles drive timing internally, but for BLE raw
-            # driving we add the user-specified duration as a supplemental wait.
-            await asyncio.sleep(args.duration)
-        await rover.stop()
         print(f"  {_GREEN}[NAV]{_RESET} Arrived at {waypoint.name}")
 
         if shutdown_event.is_set():
+            await rover.stop()
             break
 
         # -- b) Set LEDs cyan (measuring) ----------------------------------
@@ -394,15 +372,22 @@ async def run_patrol(args: argparse.Namespace) -> None:
         # -- c) IMU / vibration capture ------------------------------------
         _section("Vibration Capture")
         if not simulate:
-            # TODO: Real BLE sensor streaming for IMU data is not yet fully
-            # implemented. For now, generate simulated vibration data even on
-            # real hardware. The MICROPHONE is the real sensor input.
-            print(f"  {_YELLOW}[IMU]{_RESET} Real IMU streaming TODO — using simulated vibration data")
-            vib_sample = sim_vibration_sample(
-                station_id=waypoint.station_id,
-                sample_rate=config.sensors.sample_rate,
+            # Real capture from the rover's streaming accelerometer.  It samples
+            # far below the rate bearing analysis needs, so the sample carries
+            # its true rate and bearing verdicts are suppressed downstream
+            # rather than being invented.
+            imu_source = RoverIMUVibrationSource(
+                rover,
                 duration=float(config.sensors.measurement_duration),
+                period_ms=config.sensors.imu_period_ms,
             )
+            try:
+                vib_sample = await imu_source.read(waypoint.station_id)
+                print(f"  {_CYAN}[IMU]{_RESET} Captured {len(vib_sample.raw_signal)} "
+                      f"samples @ {vib_sample.sample_rate} Hz")
+            except SourceUnavailable as exc:
+                print(f"  {_RED}[IMU]{_RESET} unavailable: {exc}")
+                vib_sample = None
         else:
             # Pick a random fault type occasionally for demo variety
             from src.sensors.vibration import FaultType
@@ -420,12 +405,18 @@ async def run_patrol(args: argparse.Namespace) -> None:
             )
             print(f"  {_CYAN}[SIM]{_RESET} Vibration: fault={fault.value}, severity={severity:.2f}")
 
-        vib_features = extract_features(vib_sample)
-        _status("RMS", f"{vib_features['rms']:.4f}")
-        _status("Peak", f"{vib_features['peak']:.4f}")
-        _status("Crest factor", f"{vib_features['crest_factor']:.2f}")
-        _status("Kurtosis", f"{vib_features['kurtosis']:.2f}")
-        _status("Dominant freq", f"{vib_features['dominant_frequency_hz']:.1f} Hz")
+        vib_features = extract_features(vib_sample) if vib_sample is not None else None
+        if vib_features is not None:
+            _status("RMS", f"{vib_features['rms']:.4f}")
+            _status("Peak", f"{vib_features['peak']:.4f}")
+            _status("Crest factor", f"{vib_features['crest_factor']:.2f}")
+            _status("Kurtosis", f"{vib_features['kurtosis']:.2f}")
+            _status("Dominant freq", f"{vib_features['dominant_frequency_hz']:.1f} Hz")
+            _status("Sample rate", f"{vib_features['sample_rate_hz']:.0f} Hz")
+            if not vib_features["bearing_analysis_available"]:
+                _status("Bearing analysis", "UNAVAILABLE at this sample rate", _YELLOW)
+        else:
+            _status("Vibration", "NO DATA", _RED)
 
         if shutdown_event.is_set():
             break
@@ -436,9 +427,6 @@ async def run_patrol(args: argparse.Namespace) -> None:
         mic_sample_rate = 44100
 
         if simulate:
-            # Use simulator for acoustic data too
-            from src.sensors.acoustic import AcousticFaultType
-            from src.sensors.simulator import generate_acoustic_sample
             aco_sample = generate_acoustic_sample(
                 station_id=waypoint.station_id,
                 sample_rate=mic_sample_rate,
@@ -446,15 +434,19 @@ async def run_patrol(args: argparse.Namespace) -> None:
             )
             print(f"  {_CYAN}[SIM]{_RESET} Acoustic: simulated ambient noise")
         else:
-            # Real microphone recording
-            mic_signal = _record_microphone(duration=mic_duration, sample_rate=mic_sample_rate)
-            aco_sample = AcousticSample(
-                station_id=waypoint.station_id,
-                timestamp=time.time(),
-                raw_signal=mic_signal,
+            mic_source = MicrophoneAcousticSource(
                 sample_rate=mic_sample_rate,
                 duration=mic_duration,
+                device=config.sensors.microphone_device or None,
             )
+            print(f"  {_CYAN}[MIC]{_RESET} Recording {mic_duration}s @ {mic_sample_rate} Hz ...")
+            try:
+                aco_sample = await mic_source.read(waypoint.station_id)
+                print(f"  {_CYAN}[MIC]{_RESET} Captured: "
+                      f"RMS={aco_sample.rms:.6f}  Peak={aco_sample.peak:.6f}")
+            except SourceUnavailable as exc:
+                print(f"  {_RED}[MIC]{_RESET} unavailable: {exc}")
+                aco_sample = None
 
         if shutdown_event.is_set():
             break
@@ -474,7 +466,7 @@ async def run_patrol(args: argparse.Namespace) -> None:
             vibration=vib_sample,
             acoustic=aco_sample,
             thermal=None,  # No thermal camera attached
-            station_history=station_history if station_history else None,
+            station_history=station_history or None,
         )
         fusion_elapsed = time.time() - fusion_start
 
@@ -493,27 +485,23 @@ async def run_patrol(args: argparse.Namespace) -> None:
         await rover.set_leds(r, g, b)
 
         # -- h) Logging -----------------------------------------------------
-        measured_at = datetime.now(timezone.utc).isoformat()
+        measured_at = datetime.now(UTC).isoformat()
 
-        measurement_id = await db.log_measurement(
-            patrol_id=patrol_id,
-            station_id=waypoint.station_id,
-            measured_at=measured_at,
-            features=vib_features,
-        )
-
-        # Log diagnosis to DB
-        # The DB log_diagnosis expects an object with fault_type, confidence,
-        # severity, recommendation, reasoning — build a simple namespace.
-        class _DiagRecord:
-            pass
-        diag_rec = _DiagRecord()
-        diag_rec.fault_type = type("_FT", (), {"value": diagnosis.correlated_faults[0] if diagnosis.correlated_faults else "normal"})()
-        diag_rec.confidence = diagnosis.overall_confidence
-        diag_rec.severity = diagnosis.overall_health.value
-        diag_rec.recommendation = diagnosis.recommendation
-        diag_rec.reasoning = diagnosis.reasoning
-        await db.log_diagnosis(measurement_id, waypoint.station_id, diag_rec, measured_at)
+        if vib_features is not None:
+            measurement_id = await db.log_measurement(
+                patrol_id=patrol_id,
+                station_id=waypoint.station_id,
+                measured_at=measured_at,
+                features=vib_features,
+                source_name="simulated" if simulate else "rover-imu",
+                simulated=simulate,
+            )
+            await db.log_diagnosis(
+                measurement_id,
+                waypoint.station_id,
+                DiagnosisRecord.from_fused(diagnosis, simulated=simulate),
+                measured_at,
+            )
 
         # OTel metrics
         station_counter.add(1, {"station.id": waypoint.station_id})
@@ -555,7 +543,6 @@ async def run_patrol(args: argparse.Namespace) -> None:
         print(f"\n  {_DIM}Station completed in {station_elapsed:.1f}s{_RESET}")
 
         # -- j) Speak diagnosis ---------------------------------------------
-        health_word = diagnosis.overall_health.value
         if diagnosis.overall_health == OverallHealth.CRITICAL:
             tts_msg = f"Station {waypoint.name}: Critical! {diagnosis.recommendation}"
         elif diagnosis.overall_health == OverallHealth.WARNING:
@@ -596,7 +583,7 @@ async def run_patrol(args: argparse.Namespace) -> None:
     patrol_elapsed = time.time() - patrol_start_time
     patrol_duration_hist.record(patrol_elapsed)
 
-    completed_at = datetime.now(timezone.utc).isoformat()
+    completed_at = datetime.now(UTC).isoformat()
     await db.complete_patrol(
         patrol_id=patrol_id,
         completed_at=completed_at,
@@ -647,6 +634,8 @@ async def run_patrol(args: argparse.Namespace) -> None:
     # ======================================================================
     await rover.set_leds(0, 0, 0)
     await rover.disconnect()
+    await fusion.aclose()
+    await db.close()
     _info("Rover disconnected")
     _info(f"Data saved to {config.database.path}")
 
@@ -716,6 +705,8 @@ Examples:
     except KeyboardInterrupt:
         print(f"\n{_RED}Interrupted.{_RESET}")
         sys.exit(1)
+    finally:
+        shutdown_telemetry()
 
 
 if __name__ == "__main__":

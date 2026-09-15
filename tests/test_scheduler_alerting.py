@@ -1,12 +1,11 @@
 """Tests for scheduler and alerting modules."""
 
+
 import pytest
-from datetime import datetime
 
-from src.scheduler import _in_quiet_hours
+from src.ai.fusion import FusedDiagnosis, ModalityResult, OverallHealth
 from src.alerting import AlertManager
-from src.ai.fusion import FusedDiagnosis, OverallHealth, ModalityResult
-
+from src.scheduler import _in_quiet_hours
 
 # === Quiet Hours Logic ===
 
@@ -110,9 +109,9 @@ async def test_alert_monitor_not_logged():
 async def test_alert_history_accumulates():
     """Multiple alerts accumulate in history."""
     mgr = AlertManager()
-    for i in range(5):
+    for index in range(5):
         diagnosis = FusedDiagnosis(
-            station_id=f"A-{i:03d}",
+            station_id=f"A-{index:03d}",
             overall_health=OverallHealth.CRITICAL,
             overall_confidence=0.90,
             modality_results=[],

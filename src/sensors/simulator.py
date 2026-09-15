@@ -7,13 +7,13 @@ Generates realistic signals for various fault conditions across all modalities:
 """
 
 import time
+
 import numpy as np
 from numpy.typing import NDArray
 
-from .vibration import VibrationSample, FaultType
-from .acoustic import AcousticSample, AcousticFaultType
-from .thermal import ThermalFrame, ThermalFaultType
-
+from .acoustic import AcousticFaultType, AcousticSample
+from .thermal import ThermalFaultType, ThermalFrame
+from .vibration import FaultType, VibrationSample
 
 # =============================================================================
 # VIBRATION SIMULATION

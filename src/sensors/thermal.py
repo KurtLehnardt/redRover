@@ -7,10 +7,11 @@ Targets:
 - HVAC anomalies
 """
 
-import numpy as np
-from numpy.typing import NDArray
 from dataclasses import dataclass
 from enum import Enum
+
+import numpy as np
+from numpy.typing import NDArray
 
 
 class ThermalFaultType(str, Enum):

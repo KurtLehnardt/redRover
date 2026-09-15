@@ -9,18 +9,17 @@ from src.sensors.acoustic import (
     compute_mel_spectrogram,
     extract_acoustic_features,
 )
-from src.sensors.thermal import (
-    ThermalFaultType,
-    ThermalFrame,
-    detect_hotspots,
-    extract_thermal_features,
-    classify_thermal_severity,
-)
 from src.sensors.simulator import (
     generate_acoustic_sample,
     generate_thermal_frame,
 )
-
+from src.sensors.thermal import (
+    ThermalFaultType,
+    ThermalFrame,
+    classify_thermal_severity,
+    detect_hotspots,
+    extract_thermal_features,
+)
 
 # =============================================================================
 # ACOUSTIC TESTS
@@ -181,3 +180,45 @@ def test_detect_hotspots_threshold():
     # With default threshold (15.0), hotspots should be detected
     hotspots_default = detect_hotspots(frame, threshold_delta=15.0)
     assert len(hotspots_default) >= 1
+
+
+# === Bandwidth reporting ===
+
+
+def test_acoustic_sample_reports_unmeasured_ultrasonic():
+    """A 44.1 kHz capture cannot see 20-48 kHz, and says so."""
+    audio = np.zeros(44100, dtype=np.float32)
+    sample = AcousticSample("M-1", 0.0, audio, sample_rate=44100, duration=1.0)
+    assert sample.supports_ultrasonic is False
+    assert sample.ultrasonic_energy is None
+
+    features = extract_acoustic_features(sample)
+    # 30-40 kHz is entirely above the 22.05 kHz Nyquist: never observed.
+    assert features["acoustic_ultrasonic_mid"] is None
+    assert features["acoustic_ultrasonic_high"] is None
+    # 20-30 kHz straddles Nyquist: a real but incomplete value, flagged as such.
+    assert features["acoustic_ultrasonic_low"] is not None
+    assert "acoustic_ultrasonic_low" in features["partial_bands"]
+    assert features["acoustic_audible_low"] is not None
+    assert "acoustic_audible_low" not in features["partial_bands"]
+
+
+def test_thermal_frame_from_explicit_pixels():
+    pixels = np.full((24, 32), 22.0, dtype=np.float32)
+    pixels[10:13, 15:18] = 80.0
+    frame = ThermalFrame("M-1", 0.0, pixels, ambient_temp=22.0)
+
+    assert frame.delta_above_ambient == pytest.approx(58.0)
+    hotspots = detect_hotspots(frame)
+    assert len(hotspots) == 1
+    assert hotspots[0]["pixel_count"] == 9
+
+
+def test_mel_filterbank_handles_short_signals():
+    """A signal shorter than n_fft must not index past the spectrum."""
+    short = AcousticSample(
+        "M-1", 0.0, np.random.randn(512).astype(np.float32),
+        sample_rate=96000, duration=512 / 96000,
+    )
+    mel = compute_mel_spectrogram(short, n_mels=16, n_fft=2048)
+    assert mel.shape[0] == 16

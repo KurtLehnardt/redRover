@@ -2,17 +2,17 @@
 numpy>=1.24.0
 scipy>=1.11.0
 
-# RVR+ Control
-sphero-sdk>=0.1.0
+# Rover control
+#   bleak  -> native BLE (macOS / Windows / Linux), used by RoverController
+#   pyserial -> firmware rovers over USB serial (see firmware/README.md)
+bleak>=0.21.0
+pyserial>=3.5
 
 # AI / Inference
 ollama>=0.4.0
 
-# Vibration Analysis
-librosa>=0.10.0
-
 # Dashboard
-fastapi>=0.104.0
+fastapi>=0.110.0
 uvicorn>=0.24.0
 jinja2>=3.1.0
 python-multipart>=0.0.6
@@ -20,18 +20,37 @@ python-multipart>=0.0.6
 # Database
 aiosqlite>=0.19.0
 
-# Drone (DJI Tello)
-djitellopy>=2.5.0
-opencv-python>=4.8.0
-
 # Telemetry
 opentelemetry-api>=1.25.0
 opentelemetry-sdk>=1.25.0
 opentelemetry-exporter-otlp>=1.25.0
+opentelemetry-exporter-prometheus>=0.46b0
 opentelemetry-instrumentation-fastapi>=0.46b0
 opentelemetry-instrumentation-httpx>=0.46b0
+prometheus-client>=0.20.0
+
+# Mapping / visualisation
+matplotlib>=3.8.0
 
 # Utilities
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
 httpx>=0.25.0
+
+# ---------------------------------------------------------------------------
+# Optional extras — install only what your hardware needs.
+# Kept out of the base install so `pip install -r requirements.txt` succeeds on
+# a clean machine (several of these are platform-specific or ship outside PyPI).
+#
+#   Sphero UART (Jetson/RPi):
+#     pip install git+https://github.com/sphero-inc/sphero-sdk-raspberrypi-python.git
+#   Microphone capture (live_patrol, acoustic source):
+#     pip install sounddevice
+#   Thermal camera (MLX90640 over I2C):
+#     pip install adafruit-circuitpython-mlx90640 adafruit-blinka
+#   Aerial drone:
+#     pip install djitellopy opencv-python      # DJI Tello EDU
+#     pip install cflib                          # Bitcraze Crazyflie
+#   Advanced audio features:
+#     pip install librosa
+# ---------------------------------------------------------------------------

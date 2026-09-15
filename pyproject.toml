@@ -7,7 +7,32 @@ requires-python = ">=3.11"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Tests must never reach a real Ollama, a real robot, or the developer's
+# database. `llm` marks the few cases that intentionally talk to a live model.
+markers = [
+    "llm: requires a running Ollama instance (deselected by default)",
+    "hardware: requires physical robot hardware (deselected by default)",
+]
+addopts = "-m 'not llm and not hardware'"
 
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+exclude = ["venv", ".venv", "build", "dist", ".claude"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",   # line length is enforced by the formatter, not the linter
+    "B008",   # FastAPI Depends() in defaults is the documented pattern
+    "UP042",  # `str, Enum` is deliberate: `.value` semantics and f-string
+              # rendering stay identical to what the logs and DB already use
+]
+
+[tool.ruff.lint.per-file-ignores]
+# These scripts prepend the project root to sys.path before importing `src`,
+# which necessarily happens after the import block starts.
+"scripts/*.py" = ["E402"]
+# Sphero EDU programs run inside the Sphero app's sandbox, which injects its
+# API (roll, delay, speak, ...) as builtins.
+"scripts/sphero_edu_patrol.py" = ["E402", "F821", "B007"]

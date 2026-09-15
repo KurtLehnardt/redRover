@@ -3,21 +3,23 @@
 import numpy as np
 import pytest
 
-from src.sensors.vibration import (
-    VibrationSample,
-    compute_fft,
-    compute_spectrogram,
-    compute_envelope_spectrum,
-    extract_features,
-)
 from src.sensors.simulator import (
-    generate_sample,
-    generate_normal,
+    FaultType,
     generate_bearing_fault,
-    generate_misalignment,
     generate_imbalance,
     generate_looseness,
-    FaultType,
+    generate_misalignment,
+    generate_normal,
+    generate_sample,
+)
+from src.sensors.vibration import (
+    VibrationSample,
+    bearing_defect_frequencies,
+    compute_envelope_spectrum,
+    compute_fft,
+    compute_spectrogram,
+    envelope_defect_energy,
+    extract_features,
 )
 
 
@@ -105,3 +107,74 @@ def test_sample_duration():
     sample = generate_sample(duration=3.0, sample_rate=4000)
     expected_samples = 3.0 * 4000
     assert len(sample.raw_signal) == expected_samples
+
+
+# === Envelope analysis (the documented bearing technique) ===
+
+
+def test_envelope_spectrum_shape():
+    sample = generate_sample(fault_type=FaultType.BEARING_OUTER, severity=0.8)
+    freqs, envelope = compute_envelope_spectrum(sample)
+    assert len(freqs) == len(envelope)
+    assert len(freqs) == len(sample.raw_signal) // 2 + 1
+
+
+def test_envelope_spectrum_rejects_unusable_sample_rate():
+    """A 1 kHz sample cannot carry the 1 kHz+ resonance band."""
+    sample = VibrationSample(
+        station_id="M-1", timestamp=0.0,
+        raw_signal=np.zeros(1000, dtype=np.float32),
+        sample_rate=1000, duration=1.0,
+    )
+    assert sample.supports_bearing_analysis is False
+    with pytest.raises(ValueError, match="envelope analysis needs"):
+        compute_envelope_spectrum(sample)
+
+
+def test_envelope_energy_higher_for_bearing_fault():
+    """Envelope defect energy separates a bearing fault from a healthy machine."""
+    faulty = generate_sample(fault_type=FaultType.BEARING_OUTER, severity=0.9)
+    healthy = generate_sample(fault_type=FaultType.NORMAL)
+
+    faulty_energy = envelope_defect_energy(faulty, rpm=1800.0)
+    healthy_energy = envelope_defect_energy(healthy, rpm=1800.0)
+
+    assert faulty_energy and healthy_energy
+    assert faulty_energy["envelope_bpfo_hz"] > healthy_energy["envelope_bpfo_hz"]
+
+
+def test_envelope_energy_absent_when_not_measurable():
+    """Missing is reported as an empty dict, not as zero energy."""
+    sample = VibrationSample(
+        station_id="M-1", timestamp=0.0,
+        raw_signal=np.zeros(500, dtype=np.float32),
+        sample_rate=100, duration=5.0,
+    )
+    assert envelope_defect_energy(sample) == {}
+
+
+def test_bearing_defect_frequencies_scale_with_rpm():
+    slow = bearing_defect_frequencies(900.0)
+    fast = bearing_defect_frequencies(1800.0)
+    assert fast["bpfo_hz"] == pytest.approx(slow["bpfo_hz"] * 2)
+    assert fast["bpfi_hz"] > fast["bpfo_hz"]  # inner race rides faster
+
+
+# === Generator coverage ===
+
+
+def test_each_generator_produces_the_requested_length():
+    for gen in (generate_normal, generate_misalignment, generate_imbalance,
+                generate_looseness):
+        signal = gen(sample_rate=2000, duration=1.0)
+        assert len(signal) == 2000
+
+
+def test_bearing_generator_severity_increases_impulsiveness():
+    mild = VibrationSample(
+        "M", 0.0, generate_bearing_fault(4000, 2.0, severity=0.2), 4000, 2.0,
+    )
+    severe = VibrationSample(
+        "M", 0.0, generate_bearing_fault(4000, 2.0, severity=0.9), 4000, 2.0,
+    )
+    assert severe.kurtosis > mild.kurtosis
