@@ -1,36 +1,41 @@
 """Tests for drone controller, missions, and orchestration."""
 
-import asyncio
 import pytest
-import numpy as np
 
 from src.drone.controller import (
-    DroneController, DroneState, DroneType, InspectionTarget,
+    DroneController,
+    DroneState,
+    DroneType,
+    InspectionTarget,
 )
 from src.drone.mission import (
-    generate_overhead_pipe_mission,
+    MissionType,
     generate_elevated_gauge_mission,
     generate_hvac_duct_mission,
+    generate_overhead_pipe_mission,
     generate_wide_area_scan,
     should_deploy_drone,
-    MissionType,
 )
-from src.drone.precision_landing import PIDController, PrecisionLandingSystem, MarkerDetection
-
+from src.drone.precision_landing import MarkerDetection, PIDController, PrecisionLandingSystem
 
 # === Controller Tests ===
 
 @pytest.mark.asyncio
-async def test_drone_connect_simulated():
-    drone = DroneController(drone_type=DroneType.SIMULATED)
+async def test_drone_connect_simulated(tmp_path):
+    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path,
+                             time_scale=0.0)
     await drone.connect()
     assert drone.state == DroneState.DOCKED
-    assert drone.battery == 100
+    assert await drone.get_battery() == 100
+    # connect() must create the capture directory so cv2.imwrite cannot fail
+    # silently against a missing path.
+    assert tmp_path.is_dir()
 
 
 @pytest.mark.asyncio
-async def test_drone_launch_and_land():
-    drone = DroneController(drone_type=DroneType.SIMULATED)
+async def test_drone_launch_and_land(tmp_path):
+    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path,
+                             time_scale=0.0)
     await drone.connect()
 
     success = await drone.launch()
@@ -42,8 +47,9 @@ async def test_drone_launch_and_land():
 
 
 @pytest.mark.asyncio
-async def test_drone_inspect_target():
-    drone = DroneController(drone_type=DroneType.SIMULATED)
+async def test_drone_inspect_target(tmp_path):
+    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path,
+                             time_scale=0.0)
     await drone.connect()
     await drone.launch()
 
@@ -59,15 +65,20 @@ async def test_drone_inspect_target():
     capture = await drone.inspect(target)
 
     assert capture.target_id == "TEST-001"
-    assert len(capture.images) == 2  # Two angles
     assert capture.altitude == 2.0
+    # A simulated flight records the angles it inspected but claims no image
+    # files, because it wrote none.
+    assert capture.angles == [0.0, 90.0]
+    assert capture.images == []
+    assert capture.simulated is True
 
 
 @pytest.mark.asyncio
-async def test_drone_battery_decreases():
-    drone = DroneController(drone_type=DroneType.SIMULATED)
+async def test_drone_battery_decreases(tmp_path):
+    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path,
+                             time_scale=0.0)
     await drone.connect()
-    initial_battery = drone.battery
+    initial_battery = await drone.get_battery()
 
     await drone.launch()
     target = InspectionTarget(
@@ -79,12 +90,15 @@ async def test_drone_battery_decreases():
     await drone.inspect(target)
     await drone.return_to_cradle()
 
-    assert drone.battery < initial_battery
+    assert await drone.get_battery() < initial_battery
 
 
 @pytest.mark.asyncio
-async def test_drone_wont_launch_low_battery():
-    drone = DroneController(drone_type=DroneType.SIMULATED, min_battery=20)
+async def test_drone_wont_launch_low_battery(tmp_path):
+    drone = DroneController(
+        drone_type=DroneType.SIMULATED, min_battery=20, capture_dir=tmp_path,
+        time_scale=0.0,
+    )
     await drone.connect()
     drone._battery = 15  # Below threshold
 
@@ -153,6 +167,64 @@ def test_should_deploy_thermal_with_overhead():
     assert should_deploy_drone("overheating", {"has_overhead_equipment": False}) is False
 
 
+# === Orchestrator Tests ===
+
+@pytest.mark.asyncio
+async def test_orchestrator_refuses_while_rover_moving(tmp_path):
+    """The rover is the landing pad; it must be stationary before launch."""
+    from src.drone.orchestrator import DroneRoverOrchestrator
+    from src.rover.controller import RoverController, RoverState
+
+    rover = RoverController(simulate=True)
+    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path,
+                             time_scale=0.0)
+    await drone.connect()
+    orch = DroneRoverOrchestrator(rover=rover, drone=drone)
+
+    rover.state = RoverState.NAVIGATING
+    ok, reason = await orch.can_deploy()
+    assert not ok and "dwelling" in reason
+
+    rover.state = RoverState.DWELLING
+    ok, _ = await orch.can_deploy()
+    assert ok
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_refuses_on_estop(tmp_path):
+    from src.drone.orchestrator import DroneRoverOrchestrator
+    from src.rover.controller import RoverController, RoverState
+
+    rover = RoverController(simulate=True)
+    rover.state = RoverState.DWELLING
+    await rover.emergency_stop()
+    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path,
+                             time_scale=0.0)
+    await drone.connect()
+    orch = DroneRoverOrchestrator(rover=rover, drone=drone)
+
+    ok, reason = await orch.can_deploy()
+    assert not ok and "emergency" in reason.lower()
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_deploys_for_air_leak(tmp_path):
+    from src.drone.orchestrator import DroneRoverOrchestrator
+    from src.rover.controller import RoverController, RoverState
+
+    rover = RoverController(simulate=True)
+    rover.state = RoverState.DWELLING
+    drone = DroneController(drone_type=DroneType.SIMULATED, capture_dir=tmp_path,
+                             time_scale=0.0)
+    await drone.connect()
+    orch = DroneRoverOrchestrator(rover=rover, drone=drone, max_mission_duration=600.0)
+
+    result = await orch.evaluate_and_deploy("M-003", "air_leak", {})
+    assert result is not None
+    assert result.success
+    assert orch.total_deployments == 1
+
+
 # === PID Controller Tests ===
 
 def test_pid_output_proportional():
@@ -171,7 +243,7 @@ def test_pid_converges():
     import time as _time
     pid = PIDController(kp=0.5, ki=0.01, kd=0.1, output_limit=100.0)
     error = 10.0
-    for i in range(100):
+    for _ in range(100):
         # Force time progression so dt is meaningful
         pid._last_time = _time.time() - 0.05
         output = pid.update(error)

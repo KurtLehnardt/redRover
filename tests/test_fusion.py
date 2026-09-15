@@ -1,22 +1,21 @@
 """Tests for fusion analyzer, trend escalation, and database."""
 
-import os
-import uuid
 import pytest
 
-from src.sensors.vibration import FaultType
+from src.ai.faults import CorrelationTag, FaultCode
+from src.ai.fusion import FusedDiagnosis, FusionAnalyzer, OverallHealth
+from src.database import DiagnosisRecord
 from src.sensors.acoustic import AcousticFaultType
-from src.sensors.thermal import ThermalFaultType
 from src.sensors.simulator import (
-    generate_sample,
     generate_acoustic_sample,
+    generate_sample,
     generate_thermal_frame,
 )
-from src.ai.fusion import FusionAnalyzer, OverallHealth, FusedDiagnosis
-from src.database import Database
+from src.sensors.thermal import ThermalFaultType
+from src.sensors.vibration import FaultType
 
-
-# Use a fake ollama host so LLM always fails → rule-based fallback
+# conftest stubs OllamaClient, so every analyze() here exercises the
+# rule-based fusion path deterministically and without network access.
 ANALYZER = FusionAnalyzer(model="gemma3", ollama_host="http://localhost:99999")
 
 
@@ -47,11 +46,10 @@ async def test_fusion_vibration_plus_thermal():
     aco = generate_acoustic_sample(fault_type=AcousticFaultType.NORMAL)
     thm = generate_thermal_frame(fault_type=ThermalFaultType.HOTSPOT, severity=0.7)
     result = await ANALYZER.analyze("T-003", vibration=vib, acoustic=aco, thermal=thm)
-    # Should correlate mechanical + thermal
-    all_faults = " ".join(result.correlated_faults)
-    has_correlation = ("mechanical" in all_faults or "heating" in all_faults
-                       or len(result.correlated_faults) >= 2)
-    assert has_correlation or result.overall_health in (OverallHealth.WARNING, OverallHealth.CRITICAL)
+    # Fault codes are canonical, and the cross-modal relationship is a tag.
+    assert FaultCode.BEARING_FAULT.value in result.correlated_faults
+    assert CorrelationTag.MECHANICAL_WITH_HEATING.value in result.correlation_tags
+    assert result.overall_health in (OverallHealth.WARNING, OverallHealth.CRITICAL)
 
 
 @pytest.mark.asyncio
@@ -60,8 +58,7 @@ async def test_fusion_acoustic_only_leak():
     aco = generate_acoustic_sample(fault_type=AcousticFaultType.AIR_LEAK, severity=0.7)
     thm = generate_thermal_frame(fault_type=ThermalFaultType.NORMAL)
     result = await ANALYZER.analyze("T-004", vibration=vib, acoustic=aco, thermal=thm)
-    all_faults = " ".join(result.correlated_faults)
-    assert "air_leak" in all_faults or "electrical" in all_faults
+    assert FaultCode.AIR_LEAK.value in result.correlated_faults
 
 
 @pytest.mark.asyncio
@@ -156,7 +153,8 @@ async def test_fusion_trend_escalation():
     thm = generate_thermal_frame(fault_type=ThermalFaultType.HOTSPOT, severity=0.5)
     result = await ANALYZER.analyze("T-012", vibration=vib, acoustic=aco, thermal=thm,
                                      station_history=history)
-    assert "TRENDING" in result.recommendation or result.overall_health in (OverallHealth.WARNING, OverallHealth.CRITICAL)
+    assert "TRENDING" in result.recommendation
+    assert CorrelationTag.TRENDING_WORSE.value in result.correlation_tags
 
 
 @pytest.mark.asyncio
@@ -170,14 +168,6 @@ async def test_fusion_no_escalation_without_history():
 
 
 # === Database Tests ===
-
-@pytest.fixture
-async def test_db():
-    path = f"/tmp/test_redrover_{uuid.uuid4().hex[:8]}.db"
-    db = Database(path)
-    await db.init()
-    yield db
-    os.unlink(path)
 
 
 @pytest.mark.asyncio
@@ -203,6 +193,7 @@ async def test_db_patrol_lifecycle(test_db):
         "rms": 0.39, "peak": 0.78, "crest_factor": 2.0, "kurtosis": -1.2,
         "dominant_frequency_hz": 30.0, "energy_0_100hz": 0.1,
         "energy_100_500hz": 0.01, "energy_500_1000hz": 0.001, "energy_1000_2000hz": 0.0001,
+        "sample_rate_hz": 4000.0, "bearing_analysis_available": True,
     }
     m_id = await test_db.log_measurement(patrol_id, "M-001", "2026-07-19T00:01:00", features)
     assert m_id > 0
@@ -220,6 +211,7 @@ async def test_db_station_history(test_db):
         "rms": 0.5, "peak": 1.0, "crest_factor": 2.0, "kurtosis": 0.5,
         "dominant_frequency_hz": 30.0, "energy_0_100hz": 0.1,
         "energy_100_500hz": 0.01, "energy_500_1000hz": 0.001, "energy_1000_2000hz": 0.0001,
+        "sample_rate_hz": 4000.0, "bearing_analysis_available": True,
     }
     await test_db.log_measurement(patrol_id, "M-001", "2026-07-19T00:01:00", features)
     await test_db.log_measurement(patrol_id, "M-001", "2026-07-19T00:02:00", features)
@@ -235,6 +227,7 @@ async def test_db_station_trend(test_db):
         "rms": 0.5, "peak": 1.0, "crest_factor": 2.0, "kurtosis": 0.5,
         "dominant_frequency_hz": 30.0, "energy_0_100hz": 0.1,
         "energy_100_500hz": 0.01, "energy_500_1000hz": 0.001, "energy_1000_2000hz": 0.0001,
+        "sample_rate_hz": 4000.0, "bearing_analysis_available": True,
     }
     await test_db.log_measurement(patrol_id, "M-001", "2026-07-19T00:01:00", features)
     await test_db.log_measurement(patrol_id, "M-001", "2026-07-19T00:02:00", features)
@@ -243,3 +236,101 @@ async def test_db_station_trend(test_db):
     assert len(trend) == 2
     # Should be oldest first
     assert trend[0]["measured_at"] <= trend[1]["measured_at"]
+
+
+@pytest.mark.asyncio
+async def test_trend_matches_persisted_fault_codes(test_db):
+    """The codes a diagnosis writes must be the codes a later trend reads.
+
+    Regression test: diagnoses used to be stored under narrative labels like
+    "mechanical_failure_with_heating" while the trend rule compared modality
+    labels like "bearing_fault", so escalation could never fire.
+    """
+    patrol_id = await test_db.start_patrol("Trend Route", "2026-07-19T00:00:00")
+    features = {
+        "rms": 0.5, "peak": 1.0, "crest_factor": 2.0, "kurtosis": 0.5,
+        "dominant_frequency_hz": 30.0, "energy_0_100hz": 0.1,
+        "energy_100_500hz": 0.01, "energy_500_1000hz": 0.001,
+        "energy_1000_2000hz": 0.0001,
+        "sample_rate_hz": 4000.0, "bearing_analysis_available": True,
+    }
+
+    for i in range(3):
+        vib = generate_sample(fault_type=FaultType.NORMAL)
+        aco = generate_acoustic_sample(fault_type=AcousticFaultType.NORMAL)
+        thm = generate_thermal_frame(fault_type=ThermalFaultType.HOTSPOT, severity=0.5)
+        history = await test_db.get_station_trend("TREND-1", limit=5)
+        diagnosis = await ANALYZER.analyze(
+            "TREND-1", vibration=vib, acoustic=aco, thermal=thm,
+            station_history=history,
+        )
+        m_id = await test_db.log_measurement(
+            patrol_id, "TREND-1", f"2026-07-19T00:0{i}:00", features,
+        )
+        await test_db.log_diagnosis(
+            m_id, "TREND-1", DiagnosisRecord.from_fused(diagnosis),
+            f"2026-07-19T00:0{i}:00",
+        )
+
+    # By the third patrol the persisted history must have escalated the verdict.
+    assert CorrelationTag.TRENDING_WORSE.value in diagnosis.correlation_tags
+    assert diagnosis.overall_health in (OverallHealth.WARNING, OverallHealth.CRITICAL)
+
+
+@pytest.mark.asyncio
+async def test_db_rejects_ad_hoc_diagnosis_objects(test_db):
+    """log_diagnosis only accepts a DiagnosisRecord."""
+    patrol_id = await test_db.start_patrol("R", "2026-07-19T00:00:00")
+    features = {"rms": 0.1, "peak": 0.2, "crest_factor": 2.0, "kurtosis": 0.0,
+                "dominant_frequency_hz": 30.0, "sample_rate_hz": 4000.0,
+                "bearing_analysis_available": True}
+    m_id = await test_db.log_measurement(patrol_id, "M-9", "2026-07-19T00:01:00", features)
+
+    class Fake:
+        fault_type = "bearing_fault"
+
+    with pytest.raises(TypeError):
+        await test_db.log_diagnosis(m_id, "M-9", Fake(), "2026-07-19T00:01:00")
+
+
+@pytest.mark.asyncio
+async def test_active_faults_uses_canonical_codes(test_db):
+    patrol_id = await test_db.start_patrol("R", "2026-07-19T00:00:00")
+    features = {"rms": 0.1, "peak": 0.2, "crest_factor": 2.0, "kurtosis": 0.0,
+                "dominant_frequency_hz": 30.0, "sample_rate_hz": 4000.0,
+                "bearing_analysis_available": True}
+    m_id = await test_db.log_measurement(patrol_id, "M-7", "2026-07-19T00:01:00", features)
+    await test_db.log_diagnosis(
+        m_id, "M-7",
+        DiagnosisRecord(
+            fault_type=FaultCode.BEARING_FAULT.value, confidence=0.9,
+            severity="severe", recommendation="replace", reasoning="x",
+            health="critical", priority=1,
+        ),
+        "2026-07-19T00:01:00",
+    )
+
+    faults = await test_db.get_active_faults()
+    assert len(faults) == 1
+    assert faults[0]["fault_type"] == FaultCode.BEARING_FAULT.value
+    assert faults[0]["health"] == "critical"
+
+
+@pytest.mark.asyncio
+async def test_llm_fusion_uses_stubbed_response(stub_llm):
+    """When the LLM answers, its verdict is used and its codes are normalised."""
+    stub_llm({
+        "overall_health": "critical",
+        "correlated_faults": ["bearing_outer_race", "hotspot"],
+        "recommendation": "Replace bearing now",
+        "priority": 1,
+        "reasoning": "vibration and thermal agree",
+    })
+    vib = generate_sample(fault_type=FaultType.BEARING_OUTER, severity=0.8)
+    thm = generate_thermal_frame(fault_type=ThermalFaultType.HOTSPOT, severity=0.7)
+    result = await ANALYZER.analyze("T-LLM", vibration=vib, thermal=thm)
+
+    assert result.inference_mode == "llm"
+    assert result.overall_health == OverallHealth.CRITICAL
+    # "bearing_outer_race" is normalised onto the canonical code.
+    assert FaultCode.BEARING_FAULT.value in result.correlated_faults

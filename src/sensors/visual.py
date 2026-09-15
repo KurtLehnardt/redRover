@@ -7,9 +7,17 @@ Targets:
 - General visual anomalies (loose bolts, corrosion, missing guards)
 """
 
+from __future__ import annotations
+
+import base64
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+
+from ..ai.ollama import OllamaClient, OllamaUnavailable
+
+logger = logging.getLogger(__name__)
 
 
 class VisualFaultType(str, Enum):
@@ -103,100 +111,66 @@ Respond ONLY with valid JSON:
 
 
 class VisualAnalyzer:
-    """Analyzes visual data using local VLM (Gemma vision or LLaVA)."""
+    """Analyzes visual data using a local VLM (Gemma vision or LLaVA)."""
 
-    def __init__(self, model: str = "gemma3", ollama_host: str = "http://localhost:11434"):
+    def __init__(
+        self,
+        model: str = "gemma3",
+        ollama_host: str = "http://localhost:11434",
+        client: OllamaClient | None = None,
+    ):
         self.model = model
         self.ollama_host = ollama_host
+        self._client = client or OllamaClient(host=ollama_host, model=model)
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
 
     async def read_gauge(self, station_id: str, image_path: str) -> GaugeReading | None:
         """Read an analog gauge from an image."""
-        import httpx
-        import json
-        import base64
-
-        image_data = self._load_image_b64(image_path)
-        if not image_data:
+        data = await self._ask(GAUGE_READING_PROMPT, image_path)
+        if data is None:
             return None
-
-        response = await self._query_vision(GAUGE_READING_PROMPT, image_data)
         try:
-            data = json.loads(self._extract_json(response))
             return GaugeReading(
                 station_id=station_id,
                 gauge_id=Path(image_path).stem,
                 value=float(data.get("value", 0)),
-                unit=data.get("unit", "unknown"),
+                unit=str(data.get("unit", "unknown")),
                 min_normal=0.0,  # Set from config
                 max_normal=100.0,
                 is_in_range=data.get("zone") == "normal",
                 confidence=float(data.get("confidence", 0)),
             )
-        except (json.JSONDecodeError, KeyError, ValueError):
+        except (TypeError, ValueError) as exc:
+            logger.warning("gauge reading unparseable for %s: %s", image_path, exc)
             return None
 
     async def inspect_floor(self, station_id: str, image_path: str) -> dict:
         """Inspect floor condition for leaks/debris."""
-        import json
-
-        image_data = self._load_image_b64(image_path)
-        if not image_data:
-            return {"floor_condition": "unknown", "confidence": 0}
-
-        response = await self._query_vision(FLOOR_INSPECTION_PROMPT, image_data)
-        try:
-            return json.loads(self._extract_json(response))
-        except json.JSONDecodeError:
-            return {"floor_condition": "unknown", "confidence": 0}
+        data = await self._ask(FLOOR_INSPECTION_PROMPT, image_path)
+        return data or {"floor_condition": "unknown", "confidence": 0}
 
     async def detect_anomalies(self, station_id: str, image_path: str) -> dict:
         """General visual anomaly detection."""
-        import json
+        data = await self._ask(VISUAL_ANOMALY_PROMPT, image_path)
+        return data or {"anomalies_found": False, "confidence": 0}
 
-        image_data = self._load_image_b64(image_path)
-        if not image_data:
-            return {"anomalies_found": False, "confidence": 0}
-
-        response = await self._query_vision(VISUAL_ANOMALY_PROMPT, image_data)
+    async def _ask(self, prompt: str, image_path: str) -> dict | None:
+        image_b64 = self._load_image_b64(image_path)
+        if not image_b64:
+            logger.warning("visual: image not found at %s", image_path)
+            return None
         try:
-            return json.loads(self._extract_json(response))
-        except json.JSONDecodeError:
-            return {"anomalies_found": False, "confidence": 0}
+            return await self._client.vision_json(prompt, image_b64)
+        except OllamaUnavailable as exc:
+            logger.info("visual analysis unavailable: %s", exc)
+            return None
 
-    async def _query_vision(self, prompt: str, image_b64: str) -> str:
-        """Query Ollama with a vision prompt and image."""
-        import httpx
-
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                f"{self.ollama_host}/api/generate",
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "images": [image_b64],
-                    "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 300},
-                },
-            )
-            response.raise_for_status()
-            return response.json()["response"]
-
-    def _load_image_b64(self, image_path: str) -> str | None:
-        """Load image and convert to base64."""
-        import base64
-
+    @staticmethod
+    def _load_image_b64(image_path: str) -> str | None:
+        """Load an image and convert it to base64."""
         path = Path(image_path)
         if not path.exists():
             return None
-        with open(path, "rb") as f:
-            return base64.b64encode(f.read()).decode("utf-8")
-
-    def _extract_json(self, text: str) -> str:
-        """Extract JSON from potentially markdown-wrapped response."""
-        text = text.strip()
-        if "```" in text:
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-            text = text.strip()
-        return text
+        return base64.b64encode(path.read_bytes()).decode("utf-8")

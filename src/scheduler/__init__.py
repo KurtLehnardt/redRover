@@ -2,7 +2,8 @@
 
 import asyncio
 import logging
-from datetime import datetime, time as dt_time
+from datetime import datetime
+from datetime import time as dt_time
 
 from ..config import load_config
 

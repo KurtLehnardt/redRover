@@ -1,26 +1,54 @@
 [rover]
-# Connection type: "uart" for Jetson, "ble" for laptop
+# Connection type: "uart" for Jetson, "ble" for laptop, "serial" for firmware rovers
 connection = "ble"
 # Patrol speed (0.0 - 1.0)
 speed = 0.3
 # Time to dwell at each machine station (seconds)
 dwell_time = 10
+# Measured ground speed at full throttle (m/s) — used to time drive commands.
+# Calibrate this: drive at speed=1.0 for 5s, measure the distance, divide by 5.
+max_speed_mps = 1.5
+# Chassis half-width (m); detected walls are placed outside this radius.
+robot_radius_m = 0.12
+# Hard ceiling on any single uninterrupted drive command (s).
+max_drive_seconds = 20.0
 
 [sensors]
 # Sampling rate for vibration data (Hz)
 sample_rate = 4000
 # Duration of each measurement (seconds)
 measurement_duration = 5
-# Sensor type: "imu" (RVR+ built-in), "usb_accel", "contact_mic"
+# Sensor type: "imu" (rover IMU stream), "usb_accel", "contact_mic", "firmware"
+#
+# NOTE: the RVR+ IMU streams at tens of Hz. That is enough for imbalance,
+# misalignment and looseness, but NOT for bearing analysis, which needs
+# >= 2 kHz. Bearing verdicts are suppressed automatically below that rate.
+# For real bearing work use a firmware rover (see firmware/README.md) or a
+# dedicated USB accelerometer.
 sensor_type = "imu"
+imu_period_ms = 20
+
+# Acoustic capture. Ultrasonic leak detection (20-48 kHz) needs >= 96000 Hz;
+# most laptop microphones top out at 48000 and the ultrasonic band is then
+# reported as "not measured" rather than as zero energy.
+acoustic_sample_rate = 96000
+acoustic_duration = 3.0
+microphone_enabled = true
+microphone_device = ""
+
+# Thermal camera: "none" or "mlx90640"
+thermal_camera = "none"
+ambient_temp_c = 22.0
+machine_rpm = 1800.0
 
 [ai]
 # Model to use for vibration reasoning
-model = "batiai/gemma4-26b:q4"
+model = "gemma3"
 # Ollama host
 ollama_host = "http://localhost:11434"
 # Confidence threshold for fault alerts
 alert_threshold = 0.75
+request_timeout_s = 120.0
 
 [scheduler]
 # Patrol interval (minutes)
@@ -30,15 +58,84 @@ quiet_hours_start = "22:00"
 quiet_hours_end = "06:00"
 
 [dashboard]
-host = "0.0.0.0"
+# Bind to loopback by default: the API can start a mapping run and drive the
+# robot. Change to "0.0.0.0" only behind a trusted network or reverse proxy.
+host = "127.0.0.1"
 port = 8080
+# Shared secret for state-changing endpoints (/api/remap, /api/demo-patrol,
+# /api/estop). Empty disables those endpoints entirely.
+# Prefer the environment: REDROVER_DASHBOARD__AUTH_TOKEN=...
+auth_token = ""
+# Exact origins allowed to call the API. "*" is rejected.
+allowed_origins = ["http://localhost:3000"]
+reload = false
+
+[alerting]
+# Slack/Teams incoming webhook. Prefer the environment:
+# REDROVER_ALERTING__WEBHOOK_URL=https://hooks.slack.com/...
+webhook_url = ""
+# Lowest health level that raises an alert: monitor | warning | critical
+min_health = "warning"
+history_limit = 200
 
 [telemetry]
 enabled = true
 service_name = "redrover"
-# OTLP gRPC endpoint (set to "" for console-only export)
+# OTLP gRPC endpoint (leave empty for Prometheus-only, no stdout export)
 endpoint = ""
 export_interval_ms = 5000
+# Set true to dump spans/metrics to stdout when debugging instrumentation.
+console_export = false
+environment = "development"
 
 [database]
 path = "data/redRover.db"
+
+# ---------------------------------------------------------------------------
+# Patrol route. These stations are upserted into the `stations` table on
+# startup, so a real facility is configured here rather than in source.
+# ---------------------------------------------------------------------------
+[route]
+name = "Demo Factory Floor"
+
+[[route.waypoints]]
+station_id = "M-001"
+name = "Air Handler Unit #1"
+x = 2.0
+y = 0.0
+machine_type = "air_handler"
+rpm = 1750.0
+has_overhead_equipment = false
+
+[[route.waypoints]]
+station_id = "M-002"
+name = "Conveyor Motor #3"
+x = 4.0
+y = 1.0
+machine_type = "motor"
+rpm = 1800.0
+has_overhead_equipment = true
+
+[[route.waypoints]]
+station_id = "M-003"
+name = "Compressor A"
+x = 4.0
+y = 3.0
+machine_type = "compressor"
+rpm = 3600.0
+has_overhead_equipment = true
+
+[[route.waypoints]]
+station_id = "M-004"
+name = "Pump Station #2"
+x = 2.0
+y = 3.0
+machine_type = "pump"
+rpm = 1450.0
+has_overhead_equipment = true
+
+[simulation]
+# Multiplies every artificial delay in simulate mode.
+#   1.0 = real-time pacing (good for demos)
+#   0.0 = no waiting at all (used by the test suite)
+time_scale = 1.0

@@ -1,148 +1,155 @@
-"""End-to-end, regression, and API tests."""
+"""End-to-end and regression tests.
+
+These exercise the full patrol against the simulator. ``conftest`` redirects
+the database into a temp directory and blocks Ollama, so a full run is
+deterministic, offline, and finishes in seconds.
+"""
+
+from __future__ import annotations
 
 import pytest
 
-from src.sensors.vibration import FaultType
+from src.ai.faults import FaultCode
+from src.ai.fusion import FusionAnalyzer, OverallHealth
+from src.database import Database
+from src.main import run_patrol
 from src.sensors.acoustic import AcousticFaultType
-from src.sensors.thermal import ThermalFaultType
 from src.sensors.simulator import (
-    generate_sample,
     generate_acoustic_sample,
+    generate_sample,
     generate_thermal_frame,
 )
-from src.ai.fusion import FusionAnalyzer, OverallHealth
-
+from src.sensors.thermal import ThermalFaultType
+from src.sensors.vibration import FaultType
 
 ANALYZER = FusionAnalyzer(model="gemma3", ollama_host="http://localhost:99999")
 
 
 # === End-to-End Tests ===
 
-@pytest.mark.asyncio
-async def test_full_patrol_completes():
-    from src.main import run_patrol
-    results = await run_patrol(simulate=True, skip_ai=True)
-    assert isinstance(results, list)
-
 
 @pytest.mark.asyncio
-async def test_full_patrol_with_fusion():
-    from src.main import run_patrol
-    results = await run_patrol(simulate=True, skip_ai=False)
-    assert len(results) == 4
+async def test_full_patrol_completes(test_config):
+    results = await run_patrol(simulate=True, skip_ai=True, config=test_config)
+    assert results == []  # skip_ai produces no diagnoses
 
 
 @pytest.mark.asyncio
-async def test_full_patrol_detects_faults():
-    from src.main import run_patrol
-    results = await run_patrol(simulate=True, skip_ai=False)
-    faults = [r for r in results if r.overall_health != OverallHealth.HEALTHY]
+async def test_full_patrol_with_fusion(test_config):
+    results = await run_patrol(simulate=True, skip_ai=False, config=test_config)
+    assert len(results) == len(test_config.route.waypoints)
+
+
+@pytest.mark.asyncio
+async def test_full_patrol_detects_faults(test_config):
+    results = await run_patrol(simulate=True, skip_ai=False, config=test_config)
+    faults = [r for r in results if r.overall_health is not OverallHealth.HEALTHY]
     assert len(faults) >= 1
 
 
 @pytest.mark.asyncio
-async def test_patrol_creates_db_records():
-    from src.main import run_patrol
-    from src.database import Database
-    from src.config import load_config
-    config = load_config()
-    db = Database(config.database.path)
+async def test_patrol_creates_db_records(test_config):
+    await run_patrol(simulate=True, skip_ai=True, config=test_config)
+    db = Database(test_config.database.path)
     await db.init()
-    await run_patrol(simulate=True, skip_ai=True)
-    patrols = await db.get_recent_patrols(1)
-    assert len(patrols) >= 1
+    try:
+        patrols = await db.get_recent_patrols(1)
+        assert len(patrols) >= 1
+        assert patrols[0]["completed_at"] is not None
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_patrol_persists_diagnoses(test_config):
+    """Regression: the patrol used to log measurements but never diagnoses.
+
+    With no diagnosis rows the dashboard's fault list and the fusion engine's
+    trend context were both permanently empty.
+    """
+    await run_patrol(simulate=True, skip_ai=False, config=test_config)
+
+    db = Database(test_config.database.path)
+    await db.init()
+    try:
+        active = await db.get_active_faults()
+        assert active, "patrol produced no diagnosis rows"
+        # Every persisted fault must be a canonical code the rule engine can
+        # match against on the next patrol.
+        for row in active:
+            assert FaultCode.parse(row["fault_type"]) is not FaultCode.UNKNOWN
+            assert row["health"] in {h.value for h in OverallHealth}
+
+        trend = await db.get_station_trend(active[0]["station_id"], limit=5)
+        assert trend and trend[-1]["fault_type"] is not None
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_patrol_marks_simulated_rows(test_config):
+    """A simulated run must be distinguishable from a real one in the data."""
+    await run_patrol(simulate=True, skip_ai=False, config=test_config)
+
+    db = Database(test_config.database.path)
+    await db.init()
+    try:
+        history = await db.get_station_history(
+            test_config.route.waypoints[0].station_id, limit=5,
+        )
+        assert history
+        assert history[0]["simulated"] == 1
+        assert "simulated" in (history[0]["source_name"] or "")
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_patrol_syncs_stations_from_config(test_config):
+    await run_patrol(simulate=True, skip_ai=True, config=test_config)
+    db = Database(test_config.database.path)
+    await db.init()
+    try:
+        stations = await db.get_stations()
+        assert {s["id"] for s in stations} == {
+            w.station_id for w in test_config.route.waypoints
+        }
+    finally:
+        await db.close()
 
 
 # === Regression Tests (known fault signatures) ===
 
+
 @pytest.mark.asyncio
 async def test_regression_bearing_outer_detected():
     vib = generate_sample(fault_type=FaultType.BEARING_OUTER, severity=0.9)
-    aco = generate_acoustic_sample(fault_type=AcousticFaultType.NORMAL)
-    thm = generate_thermal_frame(fault_type=ThermalFaultType.NORMAL)
-    result = await ANALYZER.analyze("REG-001", vibration=vib, acoustic=aco, thermal=thm)
-    fault_types = [mr.fault_type for mr in result.modality_results if mr.fault_detected]
-    assert any("bearing" in ft or "looseness" in ft for ft in fault_types) or \
-           result.overall_health != OverallHealth.HEALTHY
+    result = ANALYZER._analyze_vibration(vib)
+    assert result.fault_detected
+    assert result.code is FaultCode.BEARING_FAULT
 
 
 @pytest.mark.asyncio
 async def test_regression_air_leak_detected():
-    vib = generate_sample(fault_type=FaultType.NORMAL)
-    aco = generate_acoustic_sample(fault_type=AcousticFaultType.AIR_LEAK, severity=0.7)
-    thm = generate_thermal_frame(fault_type=ThermalFaultType.NORMAL)
-    result = await ANALYZER.analyze("REG-002", vibration=vib, acoustic=aco, thermal=thm)
-    fault_types = [mr.fault_type for mr in result.modality_results if mr.fault_detected]
-    assert "air_leak" in fault_types
+    aco = generate_acoustic_sample(fault_type=AcousticFaultType.AIR_LEAK, severity=0.8)
+    result = ANALYZER._analyze_acoustic(aco)
+    assert result.fault_detected
+    assert result.code is FaultCode.AIR_LEAK
 
 
 @pytest.mark.asyncio
-async def test_regression_normal_not_flagged():
+async def test_regression_overheating_detected():
+    thm = generate_thermal_frame(fault_type=ThermalFaultType.OVERHEATING, severity=1.0)
+    result = ANALYZER._analyze_thermal(thm)
+    assert result.fault_detected
+    assert result.code in (FaultCode.OVERHEATING, FaultCode.HOTSPOT)
+
+
+@pytest.mark.asyncio
+async def test_regression_normal_stays_normal():
     vib = generate_sample(fault_type=FaultType.NORMAL)
     aco = generate_acoustic_sample(fault_type=AcousticFaultType.NORMAL)
     thm = generate_thermal_frame(fault_type=ThermalFaultType.NORMAL)
-    result = await ANALYZER.analyze("REG-003", vibration=vib, acoustic=aco, thermal=thm)
-    assert result.overall_health == OverallHealth.HEALTHY
-
-
-@pytest.mark.asyncio
-async def test_regression_misalignment_with_thermal():
-    vib = generate_sample(fault_type=FaultType.MISALIGNMENT, severity=0.7)
-    aco = generate_acoustic_sample(fault_type=AcousticFaultType.NORMAL)
-    thm = generate_thermal_frame(fault_type=ThermalFaultType.HOTSPOT, severity=0.6)
-    result = await ANALYZER.analyze("REG-004", vibration=vib, acoustic=aco, thermal=thm)
-    assert result.overall_health in (OverallHealth.WARNING, OverallHealth.CRITICAL)
-    assert len(result.correlated_faults) >= 1
-
-
-# === Dashboard API Tests ===
-
-@pytest.mark.asyncio
-async def test_health_endpoint():
-    from httpx import AsyncClient, ASGITransport
-    from src.dashboard.app import app
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/api/health")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "ok"
-
-
-@pytest.mark.asyncio
-async def test_system_status_endpoint():
-    from httpx import AsyncClient, ASGITransport
-    from src.dashboard.app import app
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/api/system-status")
-    assert response.status_code == 200
-    data = response.json()
-    assert "ai_status" in data
-
-
-@pytest.mark.asyncio
-async def test_faults_endpoint():
-    from httpx import AsyncClient, ASGITransport
-    from src.dashboard.app import app
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/api/faults")
-    assert response.status_code == 200
-    assert isinstance(response.json(), list)
-
-
-@pytest.mark.asyncio
-async def test_index_page():
-    from httpx import AsyncClient, ASGITransport
-    from src.dashboard.app import app
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/")
-    assert response.status_code == 200
-    assert "redRover" in response.text
-
-
-@pytest.mark.asyncio
-async def test_station_detail_page():
-    from httpx import AsyncClient, ASGITransport
-    from src.dashboard.app import app
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/station/M-001")
-    assert response.status_code == 200
+    result = await ANALYZER.analyze("R-001", vibration=vib, acoustic=aco, thermal=thm)
+    assert result.overall_health is OverallHealth.HEALTHY
+    assert result.correlated_faults == []

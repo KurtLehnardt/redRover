@@ -7,9 +7,25 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Lint
+        run: ruff check .
+      # `ruff format --check` is deliberately not enforced yet: the tree has
+      # never been auto-formatted, and reformatting 36 files would bury real
+      # changes in whitespace. Run `ruff format .` as its own commit first.
+
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
 
@@ -20,13 +36,28 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
 
+      # Install the real requirements file so a broken or missing dependency
+      # fails CI instead of only failing on a developer's clean machine.
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          pip install pytest pytest-asyncio
-          pip install numpy scipy aiosqlite pydantic pydantic-settings httpx fastapi jinja2
-          pip install opentelemetry-api opentelemetry-sdk opentelemetry-instrumentation-fastapi
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
 
       - name: Run tests
-        run: pytest tests/ -v --tb=short
+        run: pytest -v --tb=short --timeout=120
+
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PlatformIO
+        run: pip install platformio
+      - name: Build firmware for every supported board
+        run: pio run -d firmware
+      - name: Run native firmware unit tests
+        run: pio test -d firmware -e native

@@ -1,81 +1,169 @@
 # redRover
 
-**Mobile Vibration Analyst for Predictive Maintenance**
+**Multi-Modal Facility Health Robot**
 
-A Sphero RVR+ robot that autonomously patrols factory floors, measuring machine vibration signatures at each station. Local AI (no cloud dependency) classifies bearing health, shaft alignment, and mechanical looseness — replacing $100K in fixed sensors and $50K/year in analyst visits.
+A Sphero RVR+ (or any Arduino-class robot — see [`firmware/`](firmware/)) that
+autonomously patrols a facility, measuring vibration, acoustic emission, and
+thermal signatures at each machine station. Local AI (no cloud dependency)
+correlates the modalities into a single health verdict, escalating when a fault
+persists across patrols. An optional piggyback drone deploys for overhead
+inspection.
 
 ## Why "redRover"?
 
-Combines **red list** (a facility's maintenance and equipment priority list) with **rover** (autonomous mobile platform).
+Combines **red list** (a facility's maintenance and equipment priority list)
+with **rover** (autonomous mobile platform).
 
 ## Architecture
 
 ```
-[Sphero RVR+] <--UART/BLE--> [Compute Platform]
-                                  ├── Gemma 3/4 (vibration reasoning)
-                                  ├── IMU / contact microphone
-                                  ├── Patrol scheduler
-                                  └── Local dashboard (WiFi AP)
+[Rover]  <--BLE / UART / USB serial-->  [Compute platform]
+                                          |
+                                          +-- sensor sources   (vibration, acoustic, thermal)
+                                          +-- fusion engine    (local LLM, rule-based fallback)
+                                          +-- patrol scheduler
+                                          +-- SQLite history   (trend escalation)
+                                          +-- dashboard        (FastAPI, token-guarded)
+                                          +-- drone orchestrator
 ```
 
-## Compute Options
-
-| Platform | Use Case |
-|----------|----------|
-| MacBook Pro M1 | Development, POC, tethered operation |
-| Jetson Orin Nano 16GB | Untethered deployment on robot |
-
-## Quick Start
+## Quick start
 
 ```bash
-# Create virtual environment
-python3.11 -m venv venv
-source venv/bin/activate
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements-dev.txt
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Pull local AI model
-ollama pull gemma3
-
-# Run with simulated data (no hardware needed)
+# Run a full patrol against the simulator — no hardware, no AI needed
 python -m src.main --simulate
 
-# Run dashboard
-python -m src.dashboard.app
+# Faster: collapse the demo pacing
+REDROVER_SIMULATION__TIME_SCALE=0 python -m src.main --simulate
+
+# Local AI (optional; the fusion engine falls back to rules without it)
+ollama pull gemma3           # must match [ai].model in config/default.toml
+
+# Dashboard (see "Dashboard security" before exposing it)
+REDROVER_DASHBOARD__AUTH_TOKEN=$(openssl rand -hex 16) python -m src.dashboard.app
+
+pytest
 ```
 
-## Project Structure
+## Simulated vs. real
+
+`--simulate` and `--real` are strictly separated, and nothing in between.
+
+| | `--simulate` | `--real` |
+|---|---|---|
+| Vibration | synthetic fault signatures | rover IMU stream (`[sensors].sensor_type = "imu"`) |
+| Acoustic | synthetic emissions | system microphone via `sounddevice` |
+| Thermal | synthetic frames | MLX90640 over I2C, if configured |
+| Missing hardware | n/a | recorded as a **sensor failure** — never filled in with synthetic data |
+
+Every measurement row carries `source_name` and `simulated`, so a simulated run
+is distinguishable from a real one in the database and in the dashboard.
+
+## Sensor bandwidth (read this before trusting a bearing verdict)
+
+Fault signatures live in specific frequency bands, and a sensor that cannot
+reach a band has not measured it.
+
+| Fault family | Needs | RVR+ IMU (~50 Hz) | Laptop mic (44.1/48 kHz) | Firmware rover |
+|---|---|---|---|---|
+| Imbalance, misalignment, looseness | < 200 Hz | yes | — | yes |
+| Bearing defects (BPFO/BPFI/BSF) | >= 2 kHz | **no** | — | yes (kHz ADC) |
+| Ultrasonic air/gas leak | >= 96 kHz | — | **no** | with an ultrasonic mic |
+
+The code enforces this rather than papering over it:
+
+- Bands entirely above Nyquist are reported as `None` (**not measured**), never
+  as `0.0`.
+- Bands straddling Nyquist are reported with their value **and** listed in
+  `partial_bands`, because the number under-reports the true energy.
+- A bearing verdict is **suppressed** below 2 kHz: the impulsive energy is
+  still reported, but it is not attributed to a bearing.
+- A clean result from a bandwidth-limited sensor carries lower confidence than
+  a clean result from a capable one.
+
+## Fault vocabulary
+
+Every layer names a fault with the same `FaultCode` (`src/ai/faults.py`), which
+is what lets a diagnosis be matched against its own persisted history and
+escalated when it recurs. Relationships *between* faults
+(`mechanical_failure_with_heating`, `trending_worse`) are stored separately as
+correlation tags so they never pollute that matching.
+
+## Dashboard security
+
+`/api/remap`, `/api/demo-patrol`, and `/api/estop` physically move the robot.
+
+- All three require `[dashboard].auth_token`, sent as `X-RedRover-Token` or
+  `Authorization: Bearer <token>`. Prefer the environment:
+  `REDROVER_DASHBOARD__AUTH_TOKEN=...`
+- With no token configured they return **503** — disabled, not open.
+- CORS is restricted to `[dashboard].allowed_origins`; `"*"` is rejected at
+  config-load time.
+- The default bind is `127.0.0.1`.
+- `POST /api/estop` latches an emergency stop; motors stop and further drive
+  commands are refused until `clear_estop()`.
+
+## Configuration
+
+`config/default.toml` holds everything, including the patrol route — adding a
+station does not require touching source. Any value can be overridden from the
+environment with a `REDROVER_` prefix and `__` for nesting, and **the
+environment wins over the file**:
+
+```bash
+REDROVER_DASHBOARD__PORT=9000
+REDROVER_ALERTING__WEBHOOK_URL=https://hooks.slack.com/services/...
+REDROVER_SIMULATION__TIME_SCALE=0
+```
+
+Calibrate `[rover].max_speed_mps` for your chassis: drive at `speed = 1.0` for
+five seconds, measure the distance, divide by five. Navigation timing is
+derived from it.
+
+## Project structure
 
 ```
 src/
-├── rover/       # RVR+ motor control, waypoint navigation
-├── sensors/     # Vibration data acquisition (IMU + contact mic)
-├── ai/          # Local LLM inference, spectrogram classification
-├── scheduler/   # Patrol route planning + timing
-└── dashboard/   # Local web UI (FastAPI + HTMX)
-config/          # Machine waypoints, alert thresholds
-models/          # Trained vibration classifiers
-data/            # Sample datasets (CWRU bearing data)
-scripts/         # Setup scripts, provisioning
-tests/           # Unit + integration tests
+├── rover/       Motor control, navigation, Sphero V2 BLE protocol
+├── mapping/     Occupancy grid (ray-cast) + frontier explorer
+├── sensors/     Acquisition sources, DSP, simulator
+├── ai/          Fault vocabulary, fusion engine, Ollama client
+├── drone/       Drone control, missions, orchestration, precision landing
+├── scheduler/   Patrol timing and quiet hours
+└── dashboard/   FastAPI UI + control API
+firmware/        Portable C++ firmware for Arduino-class controllers
+config/          Route, thresholds, connection settings
+scripts/         CLI entry points (live patrol, room mapping)
+tests/           Unit, integration, and regression tests
 ```
 
-## Vibration Fault Detection
+## Hardware
 
-The system classifies these fault types from vibration signatures:
+- **Rover**: Sphero RVR+ (BLE or UART), or any Arduino/ESP32/RP2040/Teensy
+  robot running the firmware in [`firmware/`](firmware/)
+- **Vibration**: rover IMU (low-frequency faults only) or a kHz-rate
+  accelerometer on a firmware rover
+- **Acoustic**: any system microphone; an ultrasonic mic (>= 96 kHz) for leak
+  detection
+- **Thermal**: MLX90640 (32x24) over I2C
+- **Drone** (optional): DJI Tello EDU or Bitcraze Crazyflie 2.1
+- **Compute**: MacBook (dev) or Jetson Orin Nano (deploy)
 
-- **Normal** — healthy baseline
-- **Bearing wear** — inner/outer race defects, ball defects
-- **Shaft misalignment** — angular or parallel
-- **Mechanical looseness** — structural or component
-- **Imbalance** — mass imbalance in rotating components
+Optional dependencies are listed at the bottom of `requirements.txt`; install
+only what your hardware needs.
 
-## Hardware Requirements
+## Testing
 
-- Sphero RVR+ (with UART expansion port)
-- USB accelerometer or contact microphone
-- Compute: MacBook (dev) or Jetson Orin Nano (deploy)
+```bash
+pytest                    # full suite, offline, ~5s
+pytest -m llm             # opt in to tests that need a live Ollama
+```
+
+The suite never reaches Ollama, real hardware, or `data/redRover.db`: those are
+stubbed or redirected to a temp directory by `tests/conftest.py`.
 
 ## License
 
