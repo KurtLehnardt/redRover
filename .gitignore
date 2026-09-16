@@ -36,5 +36,10 @@ data/room_map_stats.json
 *.wav
 *.mp3
 
+# PlatformIO build output and toolchain caches. `pio run` creates this; it is
+# hundreds of megabytes of downloaded toolchains and object files.
+.pio/
+firmware/.pio/
+
 # Claude
 .claude/worktrees/
