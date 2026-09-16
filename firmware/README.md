@@ -74,6 +74,26 @@ The core has **no dynamic allocation, no exceptions, no `Arduino.h`** — which
 is both why it fits on a 2 KB part and why the same code is unit-tested on your
 laptop.
 
+### Footprint
+
+`examples/BasicRover` — differential drive, three sensors, serial transport —
+built for an Uno:
+
+```
+$ pio run -d firmware -e uno
+RAM:   [====      ]  39.6% (used 812 bytes from 2048 bytes)
+Flash: [===       ]  33.4% (used 10774 bytes from 32256 bytes)
+```
+
+That leaves roughly 1.2 KB for the stack, against a worst case of about 130
+bytes through `Node::send` (a frame buffer plus its COBS encoding). The fixed
+tables scale with `REDROVER_MAX_SENSORS` and `REDROVER_MAX_FRAME`, which is why
+the AVR environments lower both.
+
+CI asserts the Uno build stays under 1 KB of RAM, so a change that quietly
+stops fitting on the smallest supported board fails the build rather than
+being discovered on hardware.
+
 ## Adding a sensor
 
 A driver is one class with two methods. Nothing else changes: not the host, not

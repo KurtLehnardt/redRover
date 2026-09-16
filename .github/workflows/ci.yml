@@ -60,6 +60,22 @@ jobs:
         run: pip install platformio
       - name: Build firmware for every supported board
         run: pio run -d firmware
+
+      - name: Uno still fits
+        # The whole premise is that this runs on the smallest board anyone
+        # would use. Without a gate, a change that stops fitting is found on
+        # hardware instead of here.
+        run: |
+          pio run -d firmware -e uno 2>&1 | tee /tmp/uno_build.log
+          used=$(grep -oE 'RAM:.*used ([0-9]+) bytes' /tmp/uno_build.log \
+                 | grep -oE '[0-9]+ bytes' | grep -oE '[0-9]+')
+          echo "Uno static RAM: ${used} bytes of 2048"
+          if [ -z "$used" ]; then echo "could not read the size report"; exit 1; fi
+          # 1 KB ceiling leaves the other half of SRAM for the stack.
+          if [ "$used" -gt 1024 ]; then
+            echo "::error::Uno static RAM ${used} B exceeds the 1024 B budget"
+            exit 1
+          fi
       - name: Run native firmware unit tests
         run: pio test -d firmware -e native
 
